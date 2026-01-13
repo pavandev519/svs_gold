@@ -6,10 +6,14 @@ from app import insert_sample_account
 app = FastAPI(title="SVS Gold API")
 
 
-@app.get("/")
-async def root():
-    return {"status": "ok", "message": "FastAPI is running"}
+# @app.get("/")
+# async def root():
+#     return {"status": "ok", "message": "FastAPI is running"}
 
+@app.get("/")
+@app.head("/")
+async def health_check():
+    return {"status": "ok"}
 
 @app.post("/insert-sample")
 async def insert_sample():
