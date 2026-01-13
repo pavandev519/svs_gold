@@ -11,7 +11,7 @@ def insert_sample_account():
     cur = None
     try:
         conn = psycopg2.connect(
-            host=os.getenv("DB_HOST", "db.nuoiyydeurtxqtlzwutq.supabase.co"),
+            host=os.getenv("DB_HOST", "35.208.45.123"),#"db.nuoiyydeurtxqtlzwutq.supabase.co"),
             port=int(os.getenv("DB_PORT", 5432)),
             dbname=os.getenv("DB_NAME", "postgres"),
             user=os.getenv("DB_USER", "postgres"),
