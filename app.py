@@ -10,15 +10,24 @@ def insert_sample_account():
     conn = None
     cur = None
     try:
-        conn = psycopg2.connect(
-            host=os.getenv("DB_HOST", "35.208.45.123"),#"db.nuoiyydeurtxqtlzwutq.supabase.co"),
-            port=int(os.getenv("DB_PORT", 5432)),
-            dbname=os.getenv("DB_NAME", "postgres"),
-            user=os.getenv("DB_USER", "postgres"),
-            password=os.getenv("DB_PASSWORD", "CxmZJCnw4qvBsFQE"),
-            sslmode=os.getenv("DB_SSLMODE", "require")
-        )
+        # conn = psycopg2.connect(
+        #     host=os.getenv("DB_HOST", "35.208.45.123"),#"db.nuoiyydeurtxqtlzwutq.supabase.co"),
+        #     port=int(os.getenv("DB_PORT", 5432)),
+        #     dbname=os.getenv("DB_NAME", "postgres"),
+        #     user=os.getenv("DB_USER", "postgres"),
+        #     password=os.getenv("DB_PASSWORD", "CxmZJCnw4qvBsFQE"),
+        #     sslmode=os.getenv("DB_SSLMODE", "require")
+        # )
 
+        conn = psycopg2.connect(
+            host="aws-0-ap-south-1.pooler.supabase.com",
+            port=6543,
+            dbname="postgres",
+            user="postgres.nuoiyydeurtxqtlzwutq",
+            password="CxmZJCnw4qvBsFQE",#os.getenv("PG_PASSWORD"),
+            sslmode="require",
+            connect_timeout=10
+        )
         cur = conn.cursor()
 
         insert_query = """
