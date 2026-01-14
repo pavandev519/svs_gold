@@ -19,15 +19,20 @@ def insert_sample_account():
         #     sslmode=os.getenv("DB_SSLMODE", "require")
         # )
 
-        conn = psycopg2.connect(
-            host="aws-0-ap-south-1.pooler.supabase.com",
-            port=6543,
-            dbname="postgres",
-            user="postgres.nuoiyydeurtxqtlzwutq",
-            password="CxmZJCnw4qvBsFQE",#os.getenv("PG_PASSWORD"),
-            sslmode="require",
-            connect_timeout=10
-        )
+        # conn = psycopg2.connect(
+        #     host="aws-0-ap-south-1.pooler.supabase.com",
+        #     port=6543,
+        #     dbname="postgres",
+        #     user="postgres.nuoiyydeurtxqtlzwutq",
+        #     password="CxmZJCnw4qvBsFQE",#os.getenv("PG_PASSWORD"),
+        #     sslmode="require",
+        #     connect_timeout=10
+        # )
+        DATABASE_URL = (
+    "postgresql://postgres.nuoiyydeurtxqtlzwutq:CxmZJCnw4qvBsFQE@aws-1-ap-south-1.pooler.supabase.com:6543/postgres"
+    )
+        conn = psycopg2.connect(DATABASE_URL, sslmode="require", connect_timeout=10)
+        print("✅ Connected via Supabase Pooler")
         cur = conn.cursor()
 
         insert_query = """
