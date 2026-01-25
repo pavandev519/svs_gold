@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
+#from fastapi.middleware.cors import CORSMiddleware
 import psycopg2
 import psycopg2.extras
 from db import get_connection
@@ -18,14 +18,14 @@ from models3 import (
 from gold_calculator import calculate_gold_estimation
 
 app = FastAPI(title="Gold CRM Service")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"
+#     ],
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
 
 
 # -------------------------------------------------
