@@ -2,10 +2,9 @@ import psycopg2
 import os
 
 
-# DATABASE_URL = (
-#     "postgresql://postgres.nuoiyydeurtxqtlzwutq:CxmZJCnw4qvBsFQE@aws-1-ap-south-1.pooler.supabase.com:6543/postgres"
-#     )
-DATABASE_URL="postgresql://postgres:CxmZJCnw4qvBsFQE@db.nuoiyydeurtxqtlzwutq.supabase.co:5432/postgres?sslmode=require"
+DATABASE_URL = (
+    "postgresql://postgres.nuoiyydeurtxqtlzwutq:L3H3qy728jNlduwl@aws-1-ap-south-1.pooler.supabase.com:6543/postgres"
+    )
 
 
 def get_connection():
