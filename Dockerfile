@@ -16,5 +16,5 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 80
 
-CMD ["uvicorn", "main4:app"]
+CMD ["uvicorn", "main:app"]
 #CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80"]
