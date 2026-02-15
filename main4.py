@@ -283,14 +283,16 @@ def create_application(payload: ApplicationCreateRequest):
     cur = conn.cursor()
     try:
         account_id = get_account_id(cur, payload.mobile)
+        application_no = payload.application_no
 
         cur.execute(
             """
             SELECT 1 FROM gold_schema.applications
             WHERE account_id = %s
             AND status IN ('SUBMITTED','APPROVED')
+            AND application_no = %s
             """,
-            (account_id,)
+            (account_id,application_no)
         )
         if cur.fetchone():
             raise HTTPException(409, "Active application already exists")
