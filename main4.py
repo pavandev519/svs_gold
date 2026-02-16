@@ -862,3 +862,188 @@ def add_settlement(payload: PaymentSettlementCreateRequest):
         conn.close()
 
 
+
+@app.get("/applications/final-preview")
+def get_final_application_preview(mobile: str = Query(...)):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    try:
+        # --------------------------------------------------
+        # ACCOUNT (USING MOBILE)
+        # --------------------------------------------------
+        cur.execute("""
+            SELECT *
+            FROM gold_schema.accounts
+            WHERE mobile = %s
+        """, (mobile,))
+        account = cur.fetchone()
+
+        if not account:
+            raise HTTPException(404, "Account not found")
+
+        account_id = account["account_id"]
+
+        # --------------------------------------------------
+        # LATEST ACTIVE APPLICATION
+        # --------------------------------------------------
+        cur.execute("""
+            SELECT *
+            FROM gold_schema.applications
+            WHERE account_id = %s
+              AND status IN ('SUBMITTED', 'APPROVED')
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, (account_id,))
+        application = cur.fetchone()
+
+        if not application:
+            raise HTTPException(409, "No active application found")
+
+        application_id = application["application_id"]
+
+        # --------------------------------------------------
+        # ADDRESSES
+        # --------------------------------------------------
+        cur.execute("""
+            SELECT address_type, address_line, street,
+                   city, state, country, pincode
+            FROM gold_schema.addresses
+            WHERE account_id = %s
+        """, (account_id,))
+        addresses = cur.fetchall()
+
+        # --------------------------------------------------
+        # PRIMARY BANK ACCOUNT
+        # --------------------------------------------------
+        cur.execute("""
+            SELECT bank_name, branch, account_number,
+                   ifsc_code, account_holder_name
+            FROM gold_schema.bank_accounts
+            WHERE account_id = %s
+              AND is_primary = TRUE
+            LIMIT 1
+        """, (account_id,))
+        bank_account = cur.fetchone()
+
+        # --------------------------------------------------
+        # ORNAMENTS
+        # --------------------------------------------------
+        cur.execute("""
+            SELECT item_name,
+                   quantity,
+                   purity_percentage,
+                   approx_weight_gms,
+                   item_photo_url
+            FROM gold_schema.ornaments
+            WHERE application_id = %s
+        """, (application_id,))
+        ornaments = cur.fetchall()
+
+        # --------------------------------------------------
+        # ESTIMATION + ITEMS
+        # --------------------------------------------------
+        cur.execute("""
+            SELECT e.estimation_id,
+                   e.estimation_no,
+                   e.estimation_date,
+                   e.total_net_amount
+            FROM gold_schema.estimation_application_map m
+            JOIN gold_schema.estimations e
+              ON e.estimation_id = m.estimation_id
+            WHERE m.application_id = %s
+        """, (application_id,))
+        estimation = cur.fetchone()
+
+        estimation_items = []
+        if estimation:
+            cur.execute("""
+                SELECT item_name,
+                       quantity,
+                       gross_weight_gms,
+                       stone_weight_gms,
+                       net_weight_gms,
+                       gold_rate_per_gm,
+                       purity_percentage,
+                       gross_amount,
+                       deduction_percentage,
+                       net_amount
+                FROM gold_schema.estimation_items
+                WHERE estimation_id = %s
+            """, (estimation["estimation_id"],))
+            estimation_items = cur.fetchall()
+
+        # --------------------------------------------------
+        # PLEDGE DETAILS (ONLY FOR PLEDGE RELEASE)
+        # --------------------------------------------------
+        cur.execute("""
+            SELECT pledger_name,
+                   pledger_address,
+                   financier_name,
+                   branch_name,
+                   gold_loan_account_no,
+                   principal_amount,
+                   interest_amount,
+                   total_due,
+                   cheque_no,
+                   cheque_date,
+                   margin_percentage
+            FROM gold_schema.pledge_details
+            WHERE application_id = %s
+        """, (application_id,))
+        pledge_details = cur.fetchone()
+
+        # --------------------------------------------------
+        # DOCUMENTS
+        # --------------------------------------------------
+        cur.execute("""
+            SELECT document_type,
+                   document_number,
+                   file_name,
+                   file_path
+            FROM gold_schema.account_documents
+            WHERE account_id = %s
+        """, (account_id,))
+        documents = cur.fetchall()
+
+        # --------------------------------------------------
+        # FINAL RESPONSE
+        # --------------------------------------------------
+        return {
+            "account": {
+                "account_id": account_id,
+                "account_code": account["account_code"],
+                "name": f"{account['first_name']} {account['last_name']}",
+                "mobile": account["mobile"],
+                "email": account["email"],
+                "dob": account["date_of_birth"],
+                "gender": account["gender"],
+                "pan_no": account["pan_no"],
+                "aadhar_no": account["aadhar_no"],
+                "occupation": account["occupation"]
+            },
+            "addresses": addresses,
+            "bank_account": bank_account,
+            "application": {
+                "application_id": application_id,
+                "application_no": application["application_no"],
+                "application_type": application["application_type"],
+                "application_date": application["application_date"],
+                "place": application["place"],
+                "status": application["status"],
+                "total_quantity": application["total_quantity"],
+                "total_weight_gms": float(application["total_weight_gms"] or 0)
+            },
+            "ornaments": ornaments,
+            "estimation": {
+                "summary": estimation,
+                "items": estimation_items
+            },
+            "pledge_details": pledge_details,
+            "documents": documents
+        }
+
+    finally:
+        cur.close()
+        conn.close()
+
