@@ -29,8 +29,6 @@ class AccountCreateRequest(BaseModel):
 
     first_name: str
     last_name: str
-    contact_person: Optional[str] = None #
-
     mobile: str
     phone: Optional[str] = None #
     email: Optional[EmailStr] = None
@@ -39,10 +37,8 @@ class AccountCreateRequest(BaseModel):
     date_of_birth: Optional[date] = None
     aadhar_no: Optional[str] = None
 
-    yearly_income: Optional[Decimal] = None
     occupation: Optional[str] = None
 
-    gst_no: Optional[str] = None  #
     pan_no: Optional[str] = None  
 
     source: Optional[str] = None  #
@@ -147,22 +143,12 @@ class ApplicationListResponse(BaseModel):
 class PledgeDetailsCreateRequest(BaseModel):
     mobile: str
 
-    pledger_name: str
-    pledger_address: Optional[str] = None
-
     financier_name: str
     branch_name: Optional[str] = None
     gold_loan_account_no: str
-    authorized_person: Optional[str] = None
 
     principal_amount: Decimal
     interest_amount: Optional[Decimal] = None
-    total_due: Decimal
-
-    cheque_no: Optional[str] = None
-    cheque_date: Optional[date] = None
-
-    margin_percentage: Optional[Decimal] = None
 
 
 class PledgeDetailsResponse(BaseModel):

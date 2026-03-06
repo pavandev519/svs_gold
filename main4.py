@@ -105,17 +105,16 @@ def create_account(payload: AccountCreateRequest):
             """
             INSERT INTO gold_schema.accounts (
                 account_type, account_code,
-                first_name, last_name, contact_person,
+                first_name, last_name,
                 mobile, phone, email,
                 gender, date_of_birth, aadhar_no,
-                yearly_income, occupation,
-                gst_no, pan_no,
+                occupation,
+                pan_no,
                 source, owner,
                 state, district, city, pincode,
                 address_text
             )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING account_id, account_code
             """,
             (
@@ -123,16 +122,13 @@ def create_account(payload: AccountCreateRequest):
                 payload.account_code,
                 payload.first_name,
                 payload.last_name,
-                payload.contact_person,
                 payload.mobile,
                 payload.phone,
                 payload.email,
                 payload.gender,
                 payload.date_of_birth,
                 payload.aadhar_no,
-                payload.yearly_income,
                 payload.occupation,
-                payload.gst_no,
                 payload.pan_no,
                 payload.source,
                 payload.owner,
@@ -389,6 +385,14 @@ def create_pledge_details(payload: PledgeDetailsCreateRequest):
         account_id = get_account_id(cur, payload.mobile)
 
         cur.execute(
+            "SELECT first_name, last_name, address_text FROM gold_schema.accounts WHERE account_id = %s",
+            (account_id,)
+        )
+        row = cur.fetchone()
+        pledger_name = f"{row[0]} {row[1]}"
+        pledger_address = row[2]
+
+        cur.execute(
             """
             SELECT application_id
             FROM gold_schema.applications
@@ -418,28 +422,22 @@ def create_pledge_details(payload: PledgeDetailsCreateRequest):
                 application_id, pledger_name,
                 pledger_address, financier_name,
                 branch_name, gold_loan_account_no,
-                authorized_person, principal_amount,
-                interest_amount, total_due,
-                cheque_no, cheque_date,
-                margin_percentage
+                principal_amount, interest_amount,
+                total_due
             )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING pledge_id
             """,
             (
                 application_id,
-                payload.pledger_name,
-                payload.pledger_address,
+                pledger_name,
+                pledger_address,
                 payload.financier_name,
                 payload.branch_name,
                 payload.gold_loan_account_no,
-                payload.authorized_person,
                 payload.principal_amount,
                 payload.interest_amount,
-                payload.total_due,
-                payload.cheque_no,
-                payload.cheque_date,
-                payload.margin_percentage
+                payload.principal_amount + (payload.interest_amount or 0)
             )
         )
         pledge_id = cur.fetchone()[0]
@@ -775,36 +773,36 @@ def add_invoice_item(payload: PaymentInvoiceItemCreateRequest):
         conn.close()
 
 
-@app.post("/payments/deduction", response_model=PaymentDeductionResponse)
-def add_deduction(payload: PaymentDeductionCreateRequest):
-    conn = get_connection()
-    cur = conn.cursor()
-    try:
-        cur.execute("""
-            INSERT INTO gold_schema.payment_deductions (
-                invoice_item_id,
-                deduction_type,
-                deduction_amount
-            )
-            VALUES (%s,%s,%s)
-            RETURNING deduction_id
-        """, (
-            payload.invoice_item_id,
-            payload.deduction_type,
-            payload.deduction_amount
-        ))
+# @app.post("/payments/deduction", response_model=PaymentDeductionResponse)
+# def add_deduction(payload: PaymentDeductionCreateRequest):
+#     conn = get_connection()
+#     cur = conn.cursor()
+#     try:
+#         cur.execute("""
+#             INSERT INTO gold_schema.payment_deductions (
+#                 invoice_item_id,
+#                 deduction_type,
+#                 deduction_amount
+#             )
+#             VALUES (%s,%s,%s)
+#             RETURNING deduction_id
+#         """, (
+#             payload.invoice_item_id,
+#             payload.deduction_type,
+#             payload.deduction_amount
+#         ))
 
-        deduction_id = cur.fetchone()[0]
-        conn.commit()
+#         deduction_id = cur.fetchone()[0]
+#         conn.commit()
 
-        return {
-            "deduction_id": deduction_id,
-            "invoice_item_id": payload.invoice_item_id
-        }
+#         return {
+#             "deduction_id": deduction_id,
+#             "invoice_item_id": payload.invoice_item_id
+#         }
 
-    finally:
-        cur.close()
-        conn.close()
+#     finally:
+#         cur.close()
+#         conn.close()
 
 
 @app.post("/payments/settlement", response_model=PaymentSettlementResponse)
