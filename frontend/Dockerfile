@@ -5,13 +5,13 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Copy package files
-COPY docker/frontend/svsgold-frontend/package.json ./
+COPY svsgold-frontend/package.json ./
 
 # Install dependencies
 RUN npm install
 
 # Copy source code
-COPY docker/frontend/svsgold-frontend/ .
+COPY svsgold-frontend/ .
 
 # Build the React application
 RUN npm run build
@@ -21,7 +21,7 @@ RUN apk add --no-cache nginx
 
 # Create custom nginx configuration
 RUN mkdir -p /etc/nginx/http.d
-COPY docker/frontend/nginx.conf /etc/nginx/http.d/default.conf
+COPY nginx.conf /etc/nginx/http.d/default.conf
 
 # Copy built files to nginx html directory
 RUN mkdir -p /usr/share/nginx/html && cp -r dist/* /usr/share/nginx/html/
