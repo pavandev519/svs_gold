@@ -1309,29 +1309,29 @@ def get_final_application_preview(mobile: str = Query(...)):
 
         application_id = application["application_id"]
 
-        # --------------------------------------------------
-        # ADDRESSES
-        # --------------------------------------------------
-        cur.execute("""
-            SELECT address_type, address_line, street,
-                   city, state, country, pincode
-            FROM gold_schema.addresses
-            WHERE account_id = %s
-        """, (account_id,))
-        addresses = cur.fetchall()
+        # # --------------------------------------------------
+        # # ADDRESSES
+        # # --------------------------------------------------
+        # cur.execute("""
+        #     SELECT address_type, address_line, street,
+        #            city, state, country, pincode
+        #     FROM gold_schema.addresses
+        #     WHERE account_id = %s
+        # """, (account_id,))
+        # addresses = cur.fetchall()
 
-        # --------------------------------------------------
-        # PRIMARY BANK ACCOUNT
-        # --------------------------------------------------
-        cur.execute("""
-            SELECT bank_name, branch, account_number,
-                   ifsc_code, account_holder_name
-            FROM gold_schema.bank_accounts
-            WHERE account_id = %s
-              AND is_primary = TRUE
-            LIMIT 1
-        """, (account_id,))
-        bank_account = cur.fetchone()
+        # # --------------------------------------------------
+        # # PRIMARY BANK ACCOUNT
+        # # --------------------------------------------------
+        # cur.execute("""
+        #     SELECT bank_name, branch, account_number,
+        #            ifsc_code, account_holder_name
+        #     FROM gold_schema.bank_accounts
+        #     WHERE account_id = %s
+        #       AND is_primary = TRUE
+        #     LIMIT 1
+        # """, (account_id,))
+        # bank_account = cur.fetchone()
 
         # --------------------------------------------------
         # ORNAMENTS
@@ -1400,37 +1400,37 @@ def get_final_application_preview(mobile: str = Query(...)):
         """, (application_id,))
         pledge_details = cur.fetchone()
 
-        # --------------------------------------------------
-        # DOCUMENTS
-        # --------------------------------------------------
-        cur.execute("""
-            SELECT document_type,
-                   document_number,
-                   file_name,
-                   file_path
-            FROM gold_schema.account_documents
-            WHERE account_id = %s
-        """, (account_id,))
-        documents = cur.fetchall()
+        # # --------------------------------------------------
+        # # DOCUMENTS
+        # # --------------------------------------------------
+        # cur.execute("""
+        #     SELECT document_type,
+        #            document_number,
+        #            file_name,
+        #            file_path
+        #     FROM gold_schema.account_documents
+        #     WHERE account_id = %s
+        # """, (account_id,))
+        # documents = cur.fetchall()
 
         # --------------------------------------------------
         # FINAL RESPONSE
         # --------------------------------------------------
         return {
-            "account": {
-                "account_id": account_id,
-                "account_code": account["account_code"],
-                "name": f"{account['first_name']} {account['last_name']}",
-                "mobile": account["mobile"],
-                "email": account["email"],
-                "dob": account["date_of_birth"],
-                "gender": account["gender"],
-                "pan_no": account["pan_no"],
-                "aadhar_no": account["aadhar_no"],
-                "occupation": account["occupation"]
-            },
-            "addresses": addresses,
-            "bank_account": bank_account,
+            # "account": {
+            #     "account_id": account_id,
+            #     "account_code": account["account_code"],
+            #     "name": f"{account['first_name']} {account['last_name']}",
+            #     "mobile": account["mobile"],
+            #     "email": account["email"],
+            #     "dob": account["date_of_birth"],
+            #     "gender": account["gender"],
+            #     "pan_no": account["pan_no"],
+            #     "aadhar_no": account["aadhar_no"],
+            #     "occupation": account["occupation"]
+            # },
+            #"addresses": addresses,
+            #"bank_account": bank_account,
             "application": {
                 "application_id": application_id,
                 "application_no": application["application_no"],
@@ -1447,7 +1447,7 @@ def get_final_application_preview(mobile: str = Query(...)):
                 "items": estimation_items
             },
             "pledge_details": pledge_details,
-            "documents": documents
+            #"documents": documents
         }
 
     finally:
@@ -1495,6 +1495,68 @@ def get_gold_items():
         conn.close()
 
 
+# @app.get("/customers/search")
+# def search_customer(mobile: str = Query(...)):
+#     conn = get_connection()
+#     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+#     try:
+#         cur.execute("SELECT * FROM gold_schema.accounts WHERE mobile=%s", (mobile,))
+#         customer = cur.fetchone()
+#         if not customer:
+#             raise HTTPException(404, "Customer not found")
+
+#         account_id = customer['account_id']
+
+#         # Fetch all applications
+#         cur.execute("SELECT * FROM gold_schema.applications WHERE account_id=%s ORDER BY created_at DESC", (account_id,))
+#         applications = cur.fetchall()
+
+#         # Fetch all estimations with items
+#         cur.execute("""
+#             SELECT e.*, m.application_id
+#             FROM gold_schema.estimations e
+#             JOIN gold_schema.estimation_application_map m ON e.estimation_id=m.estimation_id
+#             WHERE e.account_id=%s ORDER BY e.estimation_date DESC
+#         """, (account_id,))
+#         estimations = cur.fetchall()
+#         for est in estimations:
+#             cur.execute("SELECT * FROM gold_schema.estimation_items WHERE estimation_id=%s", (est['estimation_id'],))
+#             est['items'] = cur.fetchall()
+
+#         # Fetch all invoices with items and settlements
+#         cur.execute("SELECT * FROM gold_schema.payment_invoices WHERE account_id=%s ORDER BY created_at DESC", (account_id,))
+#         invoices = cur.fetchall()
+#         for inv in invoices:
+#             invoice_id = inv['payment_invoice_id']
+#             cur.execute("SELECT * FROM gold_schema.payment_invoice_items WHERE payment_invoice_id=%s", (invoice_id,))
+#             inv['items'] = cur.fetchall()
+#             cur.execute("SELECT * FROM gold_schema.payment_settlements WHERE payment_invoice_id=%s ORDER BY payment_date DESC", (invoice_id,))
+#             inv['settlements'] = cur.fetchall()
+
+#         # Fetch all addresses
+#         cur.execute("SELECT * FROM gold_schema.addresses WHERE account_id=%s", (account_id,))
+#         addresses = cur.fetchall()
+
+#         # Fetch all bank accounts
+#         cur.execute("SELECT * FROM gold_schema.bank_accounts WHERE account_id=%s", (account_id,))
+#         bank_accounts = cur.fetchall()
+
+#         # Fetch all documents
+#         cur.execute("SELECT * FROM gold_schema.account_documents WHERE account_id=%s", (account_id,))
+#         documents = cur.fetchall()
+
+#         return {
+#             "customer": customer,
+#             "applications": applications,
+#             "estimations": estimations,
+#             "invoices": invoices,
+#             "addresses": addresses,
+#             "bank_accounts": bank_accounts,
+#             "documents": documents
+#         }
+#     finally:
+#         cur.close()
+#         conn.close()
 @app.get("/customers/search")
 def search_customer(mobile: str = Query(...)):
     conn = get_connection()
@@ -1519,19 +1581,57 @@ def search_customer(mobile: str = Query(...)):
             WHERE e.account_id=%s ORDER BY e.estimation_date DESC
         """, (account_id,))
         estimations = cur.fetchall()
-        for est in estimations:
-            cur.execute("SELECT * FROM gold_schema.estimation_items WHERE estimation_id=%s", (est['estimation_id'],))
-            est['items'] = cur.fetchall()
+
+        # Fetch all estimation items in one query
+        estimation_ids = [est['estimation_id'] for est in estimations]
+        if estimation_ids:
+            cur.execute("SELECT * FROM gold_schema.estimation_items WHERE estimation_id = ANY(%s)", (estimation_ids,))
+            all_estimation_items = cur.fetchall()
+            # Group by estimation_id
+            items_by_est = {}
+            for item in all_estimation_items:
+                eid = item['estimation_id']
+                if eid not in items_by_est:
+                    items_by_est[eid] = []
+                items_by_est[eid].append(item)
+            for est in estimations:
+                est['items'] = items_by_est.get(est['estimation_id'], [])
+        else:
+            for est in estimations:
+                est['items'] = []
 
         # Fetch all invoices with items and settlements
         cur.execute("SELECT * FROM gold_schema.payment_invoices WHERE account_id=%s ORDER BY created_at DESC", (account_id,))
         invoices = cur.fetchall()
-        for inv in invoices:
-            invoice_id = inv['payment_invoice_id']
-            cur.execute("SELECT * FROM gold_schema.payment_invoice_items WHERE payment_invoice_id=%s", (invoice_id,))
-            inv['items'] = cur.fetchall()
-            cur.execute("SELECT * FROM gold_schema.payment_settlements WHERE payment_invoice_id=%s ORDER BY payment_date DESC", (invoice_id,))
-            inv['settlements'] = cur.fetchall()
+
+        # Fetch all invoice items and settlements in one query each
+        invoice_ids = [inv['payment_invoice_id'] for inv in invoices]
+        if invoice_ids:
+            cur.execute("SELECT * FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", (invoice_ids,))
+            all_invoice_items = cur.fetchall()
+            items_by_inv = {}
+            for item in all_invoice_items:
+                iid = item['payment_invoice_id']
+                if iid not in items_by_inv:
+                    items_by_inv[iid] = []
+                items_by_inv[iid].append(item)
+
+            cur.execute("SELECT * FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s) ORDER BY payment_date DESC", (invoice_ids,))
+            all_settlements = cur.fetchall()
+            settlements_by_inv = {}
+            for sett in all_settlements:
+                iid = sett['payment_invoice_id']
+                if iid not in settlements_by_inv:
+                    settlements_by_inv[iid] = []
+                settlements_by_inv[iid].append(sett)
+
+            for inv in invoices:
+                inv['items'] = items_by_inv.get(inv['payment_invoice_id'], [])
+                inv['settlements'] = settlements_by_inv.get(inv['payment_invoice_id'], [])
+        else:
+            for inv in invoices:
+                inv['items'] = []
+                inv['settlements'] = []
 
         # Fetch all addresses
         cur.execute("SELECT * FROM gold_schema.addresses WHERE account_id=%s", (account_id,))
@@ -1557,7 +1657,6 @@ def search_customer(mobile: str = Query(...)):
     finally:
         cur.close()
         conn.close()
-
 
 @app.get("/transactions/all")
 def get_transactions(
@@ -1646,4 +1745,3 @@ def get_estimations_by_user(mobile: str = Query(...)):
     finally:
         cur.close()
         conn.close()
-
