@@ -336,8 +336,8 @@ def add_document(mobile: str, payload: AccountDocumentCreateRequest):
         #add other fields from document type if not OTHER
 
         if payload.document_type.upper() != 'OTHER':
-            if not payload.document_number:
-                raise HTTPException(400, 'document_number is required for non-OTHER documents')
+            # if not payload.document_number:
+            #     raise HTTPException(400, 'document_number is required for non-OTHER documents')
             if not payload.file_path:
                 raise HTTPException(400, 'file_path is required for non-OTHER documents')
             if not payload.file_name:
