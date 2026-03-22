@@ -138,7 +138,7 @@ class ApplicationCreateRequest(BaseModel):
     application_type: str
     application_date: date
     application_no: str
-    branch: str  # Dilsuknagar or narayanaguda
+    place: str  # Dilsuknagar or narayanaguda
 
 
 class ApplicationResponse(BaseModel):
@@ -174,7 +174,7 @@ class PledgeDetailsCreateRequest(BaseModel):
     financier_name: str
     branch_name: Optional[str] = None
     gold_loan_account_no: str
-
+    pledger_address: str
     principal_amount: Decimal
     interest_amount: Optional[Decimal] = None
 
@@ -310,7 +310,8 @@ class PaymentInvoiceItemCreateRequest(BaseModel):
     gold_rate_per_gm: Decimal
 
     gross_amount: Decimal
-    deductions_amount: Decimal
+    #deductions_amount: Decimal
+    deduction_percentage: Decimal
     net_amount: Decimal
 
     @validator('purity_after_melting')
@@ -332,7 +333,8 @@ class PaymentInvoiceItemResponse(BaseModel):
 class PaymentDeductionCreateRequest(BaseModel):
     invoice_item_id: int
     deduction_type: str  # MELTING | PROCESSING | DOCUMENTATION | OTHER
-    deduction_amount: Decimal
+    #deduction_amount: Decimal
+    deduction_percentage: Decimal
 
 
 class PaymentDeductionResponse(BaseModel):
