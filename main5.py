@@ -566,6 +566,90 @@ def get_applications_by_user(mobile: str = Query(...)):
 #         cur.close()
 #         conn.close()
 
+# @app.post("/applications/pledge-details", response_model=PledgeDetailsResponse)
+# def create_pledge_details(payload: PledgeDetailsCreateRequest):
+#     conn = get_connection()
+#     cur = conn.cursor()
+#     try:
+#         account_id = get_account_id(cur, payload.mobile)
+
+#         cur.execute(
+#             "SELECT first_name, last_name FROM gold_schema.accounts WHERE account_id = %s",
+#             (account_id,)
+#         )
+#         row = cur.fetchone()
+#         if not row:
+#             raise HTTPException(404, "Account missing for pledge details")
+
+#         pledger_name = f"{row[0]} {row[1]}".strip()
+#         pledger_address = payload.pledger_address.strip() if payload.pledger_address else ""
+
+#         if not pledger_address:
+#             raise HTTPException(400, "pledger_address is required")
+
+#         cur.execute(
+#             """
+#             SELECT application_id
+#             FROM gold_schema.applications
+#             WHERE account_id = %s
+#             AND application_type = 'PLEDGE_RELEASE'
+#             ORDER BY created_at DESC
+#             LIMIT 1
+#             """,
+#             (account_id,)
+#         )
+#         row = cur.fetchone()
+#         if not row:
+#             raise HTTPException(409, "No PLEDGE_RELEASE application found")
+
+#         application_id = row[0]
+
+#         cur.execute(
+#             "SELECT 1 FROM gold_schema.pledge_details WHERE application_id=%s",
+#             (application_id,)
+#         )
+#         if cur.fetchone():
+#             raise HTTPException(409, "Pledge details already exist")
+
+#         cur.execute(
+#             """
+#             INSERT INTO gold_schema.pledge_details (
+#                 application_id, pledger_name,
+#                 pledger_address, financier_name,
+#                 branch_name, gold_loan_account_no,
+#                 principal_amount, interest_amount,
+#                 total_due
+#             )
+#             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+#             RETURNING pledge_id
+#             """,
+#             (
+#                 application_id,
+#                 pledger_name,
+#                 pledger_address,
+#                 payload.financier_name,
+#                 payload.branch_name,
+#                 payload.gold_loan_account_no,
+#                 payload.principal_amount,
+#                 payload.interest_amount,
+#                 payload.principal_amount + (payload.interest_amount or 0)
+#             )
+#         )
+#         pledge_id = cur.fetchone()[0]
+#         conn.commit()
+#         total_due = payload.principal_amount + (payload.interest_amount or 0)
+#         return {
+#             "application_id": application_id,
+#             "pledge_id": pledge_id,
+#             "status": "PLEDGE_DETAILS_SAVED",
+#             "pledge_amount": payload.principal_amount,
+#             "interest_amount": payload.interest_amount or 0,
+#             "total_due": total_due
+#         }
+#     finally:
+#         cur.close()
+#         conn.close()
+
 @app.post("/applications/pledge-details", response_model=PledgeDetailsResponse)
 def create_pledge_details(payload: PledgeDetailsCreateRequest):
     conn = get_connection()
@@ -593,6 +677,7 @@ def create_pledge_details(payload: PledgeDetailsCreateRequest):
             FROM gold_schema.applications
             WHERE account_id = %s
             AND application_type = 'PLEDGE_RELEASE'
+            AND status IN ('DRAFT', 'SUBMITTED', 'APPROVED')
             ORDER BY created_at DESC
             LIMIT 1
             """,
@@ -605,37 +690,66 @@ def create_pledge_details(payload: PledgeDetailsCreateRequest):
         application_id = row[0]
 
         cur.execute(
-            "SELECT 1 FROM gold_schema.pledge_details WHERE application_id=%s",
+            "SELECT pledge_id FROM gold_schema.pledge_details WHERE application_id=%s",
             (application_id,)
         )
-        if cur.fetchone():
-            raise HTTPException(409, "Pledge details already exist")
-
-        cur.execute(
-            """
-            INSERT INTO gold_schema.pledge_details (
-                application_id, pledger_name,
-                pledger_address, financier_name,
-                branch_name, gold_loan_account_no,
-                principal_amount, interest_amount,
-                total_due
+        existing_pledge = cur.fetchone()
+        
+        if existing_pledge:
+            # Update existing pledge details
+            pledge_id = existing_pledge[0]
+            cur.execute(
+                """
+                UPDATE gold_schema.pledge_details
+                SET pledger_name=%s,
+                    pledger_address=%s,
+                    financier_name=%s,
+                    branch_name=%s,
+                    gold_loan_account_no=%s,
+                    principal_amount=%s,
+                    interest_amount=%s,
+                    total_due=%s
+                WHERE pledge_id=%s
+                """,
+                (
+                    pledger_name,
+                    pledger_address,
+                    payload.financier_name,
+                    payload.branch_name,
+                    payload.gold_loan_account_no,
+                    payload.principal_amount,
+                    payload.interest_amount,
+                    payload.principal_amount + (payload.interest_amount or 0),
+                    pledge_id
+                )
             )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            RETURNING pledge_id
-            """,
-            (
-                application_id,
-                pledger_name,
-                pledger_address,
-                payload.financier_name,
-                payload.branch_name,
-                payload.gold_loan_account_no,
-                payload.principal_amount,
-                payload.interest_amount,
-                payload.principal_amount + (payload.interest_amount or 0)
+        else:
+            # Insert new pledge details
+            cur.execute(
+                """
+                INSERT INTO gold_schema.pledge_details (
+                    application_id, pledger_name,
+                    pledger_address, financier_name,
+                    branch_name, gold_loan_account_no,
+                    principal_amount, interest_amount,
+                    total_due
+                )
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING pledge_id
+                """,
+                (
+                    application_id,
+                    pledger_name,
+                    pledger_address,
+                    payload.financier_name,
+                    payload.branch_name,
+                    payload.gold_loan_account_no,
+                    payload.principal_amount,
+                    payload.interest_amount,
+                    payload.principal_amount + (payload.interest_amount or 0)
+                )
             )
-        )
-        pledge_id = cur.fetchone()[0]
+            pledge_id = cur.fetchone()[0]
         conn.commit()
         total_due = payload.principal_amount + (payload.interest_amount or 0)
         return {
