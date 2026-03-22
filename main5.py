@@ -1184,7 +1184,7 @@ def get_final_application_preview(mobile: str = Query(...)):
             SELECT *
             FROM gold_schema.applications
             WHERE account_id = %s
-              AND status IN ('SUBMITTED', 'APPROVED')
+              AND status IN ('SUBMITTED', 'APPROVED', 'DRAFT')
             ORDER BY created_at DESC
             LIMIT 1
         """, (account_id,))
