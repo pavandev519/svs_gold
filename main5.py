@@ -384,7 +384,7 @@ def create_application(payload: ApplicationCreateRequest):
             """
             SELECT 1 FROM gold_schema.applications
             WHERE account_id = %s
-            AND status IN ('SUBMITTED','APPROVED')
+            AND status IN ('DRAFT','SUBMITTED','APPROVED')
             AND application_no = %s
             """,
             (account_id,application_no)
@@ -392,9 +392,10 @@ def create_application(payload: ApplicationCreateRequest):
         if cur.fetchone():
             raise HTTPException(409, "Active application already exists")
 
-        branch = payload.branch.strip()
-        if branch not in ('Dilsuknagar', 'narayanaguda'):
-            raise HTTPException(400, "branch must be Dilsuknagar or narayanaguda")
+        # print(payload)
+        # branch = payload.place.strip()
+        # if branch not in ('Dilsukhnagar', 'narayanaguda'):
+        #     raise HTTPException(400, "branch must be Dilsuknagar or narayanaguda")
 
         cur.execute(
             """
@@ -403,7 +404,7 @@ def create_application(payload: ApplicationCreateRequest):
                 application_date, application_no,
                 place, status
             )
-            VALUES (%s,%s,%s,%s,%s,'SUBMITTED')
+            VALUES (%s,%s,%s,%s,%s,'DRAFT')
             RETURNING application_id, application_no, status
             """,
             (
@@ -411,7 +412,7 @@ def create_application(payload: ApplicationCreateRequest):
                 payload.application_type,
                 payload.application_date,
                 payload.application_no,
-                branch
+                payload.place
             )
         )
         app_id, app_no, status = cur.fetchone()
@@ -471,6 +472,100 @@ def get_applications_by_user(mobile: str = Query(...)):
 # PLEDGE RELEASE DETAILS
 # -------------------------------------------------
 
+# @app.post("/applications/pledge-details", response_model=PledgeDetailsResponse)
+# def create_pledge_details(payload: PledgeDetailsCreateRequest):
+#     conn = get_connection()
+#     cur = conn.cursor()
+#     try:
+#         account_id = get_account_id(cur, payload.mobile)
+
+#         cur.execute(
+#             "SELECT first_name, last_name, address_text FROM gold_schema.accounts WHERE account_id = %s",
+#             (account_id,)
+#         )
+#         row = cur.fetchone()
+#         if not row:
+#             raise HTTPException(404, "Account missing for pledge details")
+
+#         pledger_name = f"{row[0]} {row[1]}".strip()
+#         pledger_address = row[2]
+
+#         if not pledger_name or pledger_name == "":
+#             # fallback to latest address entry
+#             cur.execute(
+#                 "SELECT address_line, street, city, state, pincode FROM gold_schema.addresses WHERE account_id=%s ORDER BY created_at DESC LIMIT 1",
+#                 (account_id,)
+#             )
+#             addr = cur.fetchone()
+#             if addr:
+#                 pledger_address = ", ".join([x for x in addr if x])
+
+#         if not pledger_address:
+#             raise HTTPException(400, "Pledger address must be available")
+
+#         cur.execute(
+#             """
+#             SELECT application_id
+#             FROM gold_schema.applications
+#             WHERE account_id = %s
+#             AND application_type = 'PLEDGE_RELEASE'
+#             ORDER BY created_at DESC
+#             LIMIT 1
+#             """,
+#             (account_id,)
+#         )
+#         row = cur.fetchone()
+#         if not row:
+#             raise HTTPException(409, "No PLEDGE_RELEASE application found")
+
+#         application_id = row[0]
+
+#         cur.execute(
+#             "SELECT 1 FROM gold_schema.pledge_details WHERE application_id=%s",
+#             (application_id,)
+#         )
+#         if cur.fetchone():
+#             raise HTTPException(409, "Pledge details already exist")
+
+#         cur.execute(
+#             """
+#             INSERT INTO gold_schema.pledge_details (
+#                 application_id, pledger_name,
+#                 pledger_address, financier_name,
+#                 branch_name, gold_loan_account_no,
+#                 principal_amount, interest_amount,
+#                 total_due
+#             )
+#             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+#             RETURNING pledge_id
+#             """,
+#             (
+#                 application_id,
+#                 pledger_name,
+#                 pledger_address,
+#                 payload.financier_name,
+#                 payload.branch_name,
+#                 payload.gold_loan_account_no,
+#                 payload.principal_amount,
+#                 payload.interest_amount,
+#                 payload.principal_amount + (payload.interest_amount or 0)
+#             )
+#         )
+#         pledge_id = cur.fetchone()[0]
+#         conn.commit()
+#         total_due = payload.principal_amount + (payload.interest_amount or 0)
+#         return {
+#             "application_id": application_id,
+#             "pledge_id": pledge_id,
+#             "status": "PLEDGE_DETAILS_SAVED",
+#             "pledge_amount": payload.principal_amount,
+#             "interest_amount": payload.interest_amount or 0,
+#             "total_due": total_due
+#         }
+#     finally:
+#         cur.close()
+#         conn.close()
+
 @app.post("/applications/pledge-details", response_model=PledgeDetailsResponse)
 def create_pledge_details(payload: PledgeDetailsCreateRequest):
     conn = get_connection()
@@ -479,7 +574,7 @@ def create_pledge_details(payload: PledgeDetailsCreateRequest):
         account_id = get_account_id(cur, payload.mobile)
 
         cur.execute(
-            "SELECT first_name, last_name, address_text FROM gold_schema.accounts WHERE account_id = %s",
+            "SELECT first_name, last_name FROM gold_schema.accounts WHERE account_id = %s",
             (account_id,)
         )
         row = cur.fetchone()
@@ -487,20 +582,10 @@ def create_pledge_details(payload: PledgeDetailsCreateRequest):
             raise HTTPException(404, "Account missing for pledge details")
 
         pledger_name = f"{row[0]} {row[1]}".strip()
-        pledger_address = row[2]
-
-        if not pledger_name or pledger_name == "":
-            # fallback to latest address entry
-            cur.execute(
-                "SELECT address_line, street, city, state, pincode FROM gold_schema.addresses WHERE account_id=%s ORDER BY created_at DESC LIMIT 1",
-                (account_id,)
-            )
-            addr = cur.fetchone()
-            if addr:
-                pledger_address = ", ".join([x for x in addr if x])
+        pledger_address = payload.pledger_address.strip() if payload.pledger_address else ""
 
         if not pledger_address:
-            raise HTTPException(400, "Pledger address must be available")
+            raise HTTPException(400, "pledger_address is required")
 
         cur.execute(
             """
@@ -564,8 +649,6 @@ def create_pledge_details(payload: PledgeDetailsCreateRequest):
     finally:
         cur.close()
         conn.close()
-
-
 # -------------------------------------------------
 # ORNAMENTS
 # -------------------------------------------------
@@ -581,7 +664,7 @@ def create_ornaments(payload: OrnamentCreateRequest):
             SELECT application_id, application_no, status
             FROM gold_schema.applications
             WHERE account_id=%s
-            AND status IN ('SUBMITTED','APPROVED')
+            AND status IN ('DRAFT','SUBMITTED','APPROVED')
             ORDER BY created_at DESC
             LIMIT 1
             """,
@@ -654,7 +737,7 @@ def add_estimation_item(payload: EstimationItemCreateRequest):
             SELECT application_id
             FROM gold_schema.applications
             WHERE account_id=%s
-            AND status IN ('SUBMITTED','APPROVED')
+            AND status IN ('DRAFT','SUBMITTED','APPROVED')
             ORDER BY created_at DESC
             LIMIT 1
             """,
@@ -709,7 +792,7 @@ def add_estimation_item(payload: EstimationItemCreateRequest):
         if not payload.item_name:
             # auto-populate from ornaments for app
             cur.execute(
-                "SELECT application_id FROM gold_schema.applications WHERE account_id=%s AND status IN ('SUBMITTED','APPROVED') ORDER BY created_at DESC LIMIT 1",
+                "SELECT application_id FROM gold_schema.applications WHERE account_id=%s AND status IN ('DRAFT','SUBMITTED','APPROVED') ORDER BY created_at DESC LIMIT 1",
                 (account_id,)
             )
             app_row = cur.fetchone()
@@ -784,7 +867,7 @@ def add_estimation_item(payload: EstimationItemCreateRequest):
             if payload.deduction_percentage is None:
                 raise HTTPException(400, "deduction_percentage is required for manual estimation item")
 
-            calc_item = calculate_gold_estimation(
+            calc = calculate_gold_estimation(
                 payload.gross_weight_gms,
                 payload.stone_weight_gms,
                 payload.purity_percentage,
@@ -948,7 +1031,7 @@ def add_invoice_item(payload: PaymentInvoiceItemCreateRequest):
                 purity_after_melting,
                 gold_rate_per_gm,
                 gross_amount,
-                deductions_amount,
+                deduction_percentage,
                 net_amount
             )
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
@@ -961,7 +1044,7 @@ def add_invoice_item(payload: PaymentInvoiceItemCreateRequest):
             payload.purity_after_melting,
             payload.gold_rate_per_gm,
             payload.gross_amount,
-            payload.deductions_amount,
+            payload.deduction_percentage,
             payload.net_amount
         ))
 
@@ -1048,6 +1131,17 @@ def add_settlement(payload: PaymentSettlementCreateRequest):
         ))
 
         settlement_id = cur.fetchone()[0]
+        
+        # Update application status from DRAFT to SUBMITTED after successful settlement
+        cur.execute("""
+            UPDATE gold_schema.applications
+            SET status = 'SUBMITTED'
+            WHERE application_id = (
+                SELECT application_id FROM gold_schema.payment_invoices WHERE payment_invoice_id = %s
+            )
+            AND status = 'DRAFT'
+        """, (invoice_id,))
+        
         conn.commit()
 
         return {
@@ -1247,32 +1341,44 @@ def get_final_application_preview(mobile: str = Query(...)):
         conn.close()
 
 
+
 @app.get("/branches")
 def get_branches():
-    return {"branches": ["Dilsuknagar", "narayanaguda"]}
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("SELECT branch_code,branch_name,full_address_txt,phone_number FROM gold_schema.branches")
+        branches = cur.fetchall()
+        return {"branches": branches}
+    finally:
+        cur.close()
+        conn.close()
 
 
 @app.get("/gold-items")
 def get_gold_items():
-    return {
-        "gold_items": [
-            {"id": 1, "name": "Ring"},
-            {"id": 2, "name": "Chain"},
-            {"id": 3, "name": "Necklace"},
-            {"id": 4, "name": "Bangle"},
-            {"id": 5, "name": "Bracelet"},
-            {"id": 6, "name": "Earrings"},
-            {"id": 7, "name": "Pendant"},
-            {"id": 8, "name": "Mangalsutra"},
-            {"id": 9, "name": "Anklet"},
-            {"id": 10, "name": "Waist Belt (Vaddanam)"},
-            {"id": 11, "name": "Nose Ring"},
-            {"id": 12, "name": "Gold Coin"},
-            {"id": 13, "name": "Brooch"},
-            {"id": 14, "name": "Hair Pin"},
-            {"id": 15, "name": "Other"}
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT id, item_name 
+            FROM gold_schema.gold_items
+            ORDER BY id
+        """)
+        rows = cur.fetchall()
+
+        gold_items = [
+            {"id": row[0], "name": row[1]}
+            for row in rows
         ]
-    }
+
+        return {"gold_items": gold_items}
+
+    finally:
+        cur.close()
+        conn.close()
 
 
 @app.get("/customers/search")
@@ -1285,21 +1391,54 @@ def search_customer(mobile: str = Query(...)):
         if not customer:
             raise HTTPException(404, "Customer not found")
 
-        # aggregate forms
-        cur.execute("SELECT * FROM gold_schema.applications WHERE account_id=%s ORDER BY created_at DESC LIMIT 1", (customer['account_id'],))
-        app_data = cur.fetchone()
+        account_id = customer['account_id']
 
-        cur.execute("SELECT e.*, m.application_id FROM gold_schema.estimations e JOIN gold_schema.estimation_application_map m ON e.estimation_id=m.estimation_id WHERE e.account_id=%s ORDER BY e.estimation_date DESC LIMIT 1", (customer['account_id'],))
-        est_data = cur.fetchone()
+        # Fetch all applications
+        cur.execute("SELECT * FROM gold_schema.applications WHERE account_id=%s ORDER BY created_at DESC", (account_id,))
+        applications = cur.fetchall()
 
-        cur.execute("SELECT * FROM gold_schema.payment_invoices WHERE account_id=%s ORDER BY created_at DESC LIMIT 1", (customer['account_id'],))
-        inv_data = cur.fetchone()
+        # Fetch all estimations with items
+        cur.execute("""
+            SELECT e.*, m.application_id
+            FROM gold_schema.estimations e
+            JOIN gold_schema.estimation_application_map m ON e.estimation_id=m.estimation_id
+            WHERE e.account_id=%s ORDER BY e.estimation_date DESC
+        """, (account_id,))
+        estimations = cur.fetchall()
+        for est in estimations:
+            cur.execute("SELECT * FROM gold_schema.estimation_items WHERE estimation_id=%s", (est['estimation_id'],))
+            est['items'] = cur.fetchall()
+
+        # Fetch all invoices with items and settlements
+        cur.execute("SELECT * FROM gold_schema.payment_invoices WHERE account_id=%s ORDER BY created_at DESC", (account_id,))
+        invoices = cur.fetchall()
+        for inv in invoices:
+            invoice_id = inv['payment_invoice_id']
+            cur.execute("SELECT * FROM gold_schema.payment_invoice_items WHERE payment_invoice_id=%s", (invoice_id,))
+            inv['items'] = cur.fetchall()
+            cur.execute("SELECT * FROM gold_schema.payment_settlements WHERE payment_invoice_id=%s ORDER BY payment_date DESC", (invoice_id,))
+            inv['settlements'] = cur.fetchall()
+
+        # Fetch all addresses
+        cur.execute("SELECT * FROM gold_schema.addresses WHERE account_id=%s", (account_id,))
+        addresses = cur.fetchall()
+
+        # Fetch all bank accounts
+        cur.execute("SELECT * FROM gold_schema.bank_accounts WHERE account_id=%s", (account_id,))
+        bank_accounts = cur.fetchall()
+
+        # Fetch all documents
+        cur.execute("SELECT * FROM gold_schema.account_documents WHERE account_id=%s", (account_id,))
+        documents = cur.fetchall()
 
         return {
             "customer": customer,
-            "application": app_data,
-            "estimation": est_data,
-            "invoice": inv_data
+            "applications": applications,
+            "estimations": estimations,
+            "invoices": invoices,
+            "addresses": addresses,
+            "bank_accounts": bank_accounts,
+            "documents": documents
         }
     finally:
         cur.close()
