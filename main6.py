@@ -1196,8 +1196,8 @@ def add_invoice_item(payload: PaymentInvoiceItemCreateRequest):
 
         invoice_id = row[0]
 
-        if payload.deductions_amount < 0 or payload.deductions_amount > 100:
-            raise HTTPException(400, "deductions_amount must be a percentage between 0 and 100")
+        if payload.deduction_percentage < 0 or payload.deduction_percentage > 100:
+            raise HTTPException(400, "deduction_percentage must be a percentage between 0 and 100")
 
         cur.execute("""
             INSERT INTO gold_schema.payment_invoice_items (
@@ -1525,8 +1525,17 @@ def get_branches():
     cur = conn.cursor()
 
     try:
-        cur.execute("SELECT branch_code,branch_name,full_address_txt,phone_number FROM gold_schema.branches")
-        branches = cur.fetchall()
+        cur.execute("SELECT branch_code, branch_name, full_address_txt, phone_number FROM gold_schema.branches")
+        rows = cur.fetchall()
+        branches = [
+            {
+                "branch_code": row[0],
+                "branch_name": row[1],
+                "full_address_txt": row[2],
+                "phone_number": row[3]
+            }
+            for row in rows
+        ]
         return {"branches": branches}
     finally:
         cur.close()
@@ -1644,6 +1653,9 @@ def search_customer(mobile: str = Query(...)):
             WHERE e.account_id=%s ORDER BY e.estimation_date DESC
         """, (account_id,))
         estimations = cur.fetchall()
+        
+
+        #customer - search 
 
         # Fetch all estimation items in one query
         estimation_ids = [est['estimation_id'] for est in estimations]
@@ -1708,6 +1720,17 @@ def search_customer(mobile: str = Query(...)):
         cur.execute("SELECT * FROM gold_schema.account_documents WHERE account_id=%s", (account_id,))
         documents = cur.fetchall()
 
+        # Fetch all ornaments for the customer's applications
+        application_ids = [app['application_id'] for app in applications]
+        ornaments = []
+        pledge_details = []
+        if application_ids:
+            cur.execute("SELECT * FROM gold_schema.ornaments WHERE application_id = ANY(%s)", (application_ids,))
+            ornaments = cur.fetchall()
+
+            cur.execute("SELECT * FROM gold_schema.pledge_details WHERE application_id = ANY(%s)", (application_ids,))
+            pledge_details = cur.fetchall()
+
         return {
             "customer": customer,
             "applications": applications,
@@ -1715,7 +1738,9 @@ def search_customer(mobile: str = Query(...)):
             "invoices": invoices,
             "addresses": addresses,
             "bank_accounts": bank_accounts,
-            "documents": documents
+            "documents": documents,
+            "ornaments": ornaments,
+            "pledge_details": pledge_details
         }
     finally:
         cur.close()
