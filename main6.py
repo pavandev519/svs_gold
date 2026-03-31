@@ -965,7 +965,7 @@ def create_ornaments(payload: OrnamentCreateRequest):
         for item in payload.ornaments:
             cur.execute(
                 """
-                SELECT ornament_id
+                SELECT item_id
                 FROM gold_schema.ornaments
                 WHERE application_id = %s
                   AND item_name = %s
@@ -989,7 +989,7 @@ def create_ornaments(payload: OrnamentCreateRequest):
                     """
                     UPDATE gold_schema.ornaments
                     SET quantity = %s
-                    WHERE ornament_id = %s
+                    WHERE item_id = %s
                     """,
                     (
                         item.quantity,
