@@ -232,38 +232,107 @@ def update_account(payload: AccountUpdateRequest):
 # ADDRESSES
 # -------------------------------------------------
 
+# @app.post("/accounts/addresses")
+# def add_address(mobile: str, payload: AddressCreateRequest):
+#     conn = get_connection()
+#     cur = conn.cursor()
+#     try:
+#         account_id = get_account_id(cur, mobile)
+#         cur.execute(
+#             """
+#             INSERT INTO gold_schema.addresses (
+#                 account_id, address_type,
+#                 address_line, street,
+#                 city, state, country, pincode
+#             )
+#             VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+#             """,
+#             (
+#                 account_id,
+#                 payload.address_type,
+#                 payload.address_line,
+#                 payload.street,
+#                 payload.city,
+#                 payload.state,
+#                 payload.country,
+#                 payload.pincode
+#             )
+#         )
+#         conn.commit()
+#         return {"status": "ADDRESS_SAVED"}
+#     finally:
+#         cur.close()
+#         conn.close()
+
 @app.post("/accounts/addresses")
 def add_address(mobile: str, payload: AddressCreateRequest):
     conn = get_connection()
     cur = conn.cursor()
     try:
         account_id = get_account_id(cur, mobile)
+        
+        # Check if address already exists
         cur.execute(
             """
-            INSERT INTO gold_schema.addresses (
-                account_id, address_type,
-                address_line, street,
-                city, state, country, pincode
-            )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+            SELECT 1 FROM gold_schema.addresses
+            WHERE account_id = %s AND address_type = %s
             """,
-            (
-                account_id,
-                payload.address_type,
-                payload.address_line,
-                payload.street,
-                payload.city,
-                payload.state,
-                payload.country,
-                payload.pincode
-            )
+            (account_id, payload.address_type)
         )
+        exists = cur.fetchone()
+        
+        if exists:
+            # Update existing address
+            cur.execute(
+                """
+                UPDATE gold_schema.addresses
+                SET address_line = %s,
+                    street = %s,
+                    city = %s,
+                    state = %s,
+                    country = %s,
+                    pincode = %s
+                WHERE account_id = %s AND address_type = %s
+                """,
+                (
+                    payload.address_line,
+                    payload.street,
+                    payload.city,
+                    payload.state,
+                    payload.country,
+                    payload.pincode,
+                    account_id,
+                    payload.address_type
+                )
+            )
+        else:
+            # Insert new address
+            cur.execute(
+                """
+                INSERT INTO gold_schema.addresses (
+                    account_id, address_type,
+                    address_line, street,
+                    city, state, country, pincode
+                )
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                """,
+                (
+                    account_id,
+                    payload.address_type,
+                    payload.address_line,
+                    payload.street,
+                    payload.city,
+                    payload.state,
+                    payload.country,
+                    payload.pincode
+                )
+            )
+        
         conn.commit()
         return {"status": "ADDRESS_SAVED"}
     finally:
         cur.close()
         conn.close()
-
 
 # -------------------------------------------------
 # BANK ACCOUNTS
@@ -379,34 +448,74 @@ def add_document(mobile: str, payload: AccountDocumentCreateRequest):
     cur = conn.cursor()
     try:
         account_id = get_account_id(cur, mobile)
-        #add other fields from document type if not OTHER
+        # add other fields from document type if not OTHER
 
         if payload.document_type.upper() != 'OTHER':
-            # if not payload.document_number:
-            #     raise HTTPException(400, 'document_number is required for non-OTHER documents')
             if not payload.file_path:
                 raise HTTPException(400, 'file_path is required for non-OTHER documents')
             if not payload.file_name:
                 raise HTTPException(400, 'file_name is required for non-OTHER documents')
 
-        cur.execute(
-            """
-            INSERT INTO gold_schema.account_documents (
-                account_id, document_type,
-                document_number, file_path,
-                file_name, file_size_mb
+        existing_sql = [
+            "SELECT document_id FROM gold_schema.account_documents",
+            "WHERE account_id = %s",
+            "AND document_type = %s"
+        ]
+        params = [account_id, payload.document_type]
+
+        if payload.file_path:
+            existing_sql.append("AND file_path = %s")
+            params.append(payload.file_path)
+
+        if payload.document_number:
+            existing_sql.append("AND COALESCE(document_number, '') = %s")
+            params.append(payload.document_number)
+
+        if not payload.file_path and payload.file_name:
+            existing_sql.append("AND file_name = %s")
+            params.append(payload.file_name)
+
+        cur.execute("\n".join(existing_sql), tuple(params))
+        existing = cur.fetchone()
+
+        if existing:
+            cur.execute(
+                """
+                UPDATE gold_schema.account_documents
+                SET document_number = %s,
+                    file_path = %s,
+                    file_name = %s,
+                    file_size_mb = %s
+                WHERE document_id = %s
+                """,
+                (
+                    payload.document_number,
+                    payload.file_path,
+                    payload.file_name,
+                    payload.file_size_mb,
+                    existing[0]
+                )
             )
-            VALUES (%s,%s,%s,%s,%s,%s)
-            """,
-            (
-                account_id,
-                payload.document_type,
-                payload.document_number,
-                payload.file_path,
-                payload.file_name,
-                payload.file_size_mb
+        else:
+            cur.execute(
+                """
+                INSERT INTO gold_schema.account_documents (
+                    account_id, document_type,
+                    document_number, file_path,
+                    file_name, file_size_mb
+                )
+                VALUES (%s,%s,%s,%s,%s,%s)
+                """,
+                (
+                    account_id,
+                    payload.document_type,
+                    payload.document_number,
+                    payload.file_path,
+                    payload.file_name,
+                    payload.file_size_mb
+                )
             )
-        )
+
         conn.commit()
         return {"status": "DOCUMENT_SAVED"}
     finally:
@@ -853,28 +962,69 @@ def create_ornaments(payload: OrnamentCreateRequest):
 
         application_id, application_no, status = row
 
-        total_qty, total_wt = 0, 0.0
         for item in payload.ornaments:
             cur.execute(
                 """
-                INSERT INTO gold_schema.ornaments (
-                    application_id, item_name,
-                    quantity, purity_percentage,
-                    approx_weight_gms, item_photo_url
-                )
-                VALUES (%s,%s,%s,%s,%s,%s)
+                SELECT ornament_id
+                FROM gold_schema.ornaments
+                WHERE application_id = %s
+                  AND item_name = %s
+                  AND purity_percentage = %s
+                  AND approx_weight_gms = %s
+                  AND item_photo_url = %s
+                LIMIT 1
                 """,
                 (
                     application_id,
                     item.item_name,
-                    item.quantity,
                     item.purity_percentage,
                     item.approx_weight_gms,
                     item.item_photo_url
                 )
             )
-            total_qty += item.quantity
-            total_wt += float(item.approx_weight_gms or 0)
+            existing = cur.fetchone()
+
+            if existing:
+                cur.execute(
+                    """
+                    UPDATE gold_schema.ornaments
+                    SET quantity = %s
+                    WHERE ornament_id = %s
+                    """,
+                    (
+                        item.quantity,
+                        existing[0]
+                    )
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO gold_schema.ornaments (
+                        application_id, item_name,
+                        quantity, purity_percentage,
+                        approx_weight_gms, item_photo_url
+                    )
+                    VALUES (%s,%s,%s,%s,%s,%s)
+                    """,
+                    (
+                        application_id,
+                        item.item_name,
+                        item.quantity,
+                        item.purity_percentage,
+                        item.approx_weight_gms,
+                        item.item_photo_url
+                    )
+                )
+
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(quantity), 0), COALESCE(SUM(approx_weight_gms), 0)
+            FROM gold_schema.ornaments
+            WHERE application_id = %s
+            """,
+            (application_id,)
+        )
+        total_qty, total_wt = cur.fetchone()
 
         cur.execute(
             """
@@ -1008,30 +1158,74 @@ def add_estimation_item(payload: EstimationItemCreateRequest):
 
                 cur.execute(
                     """
-                    INSERT INTO gold_schema.estimation_items (
-                        estimation_id, item_name,
-                        quantity, gross_weight_gms,
-                        stone_weight_gms, net_weight_gms,
-                        gold_rate_per_gm, purity_percentage,
-                        gross_amount, deduction_percentage,
-                        net_amount
-                    )
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    SELECT estimation_item_id
+                    FROM gold_schema.estimation_items
+                    WHERE estimation_id = %s
+                      AND item_name = %s
+                      AND quantity = %s
+                      AND gross_weight_gms = %s
+                      AND purity_percentage = %s
+                    LIMIT 1
                     """,
                     (
                         estimation_id,
                         item_name,
                         qty,
                         gross_weight,
-                        payload.stone_weight_gms or 0,
-                        calc_item["net_gold_weight"],
-                        payload.gold_rate_per_gm,
-                        purity,
-                        calc_item["gross_amount"],
-                        payload.deduction_percentage or 0,
-                        calc_item["net_amount"]
+                        purity
                     )
                 )
+                existing = cur.fetchone()
+
+                if existing:
+                    cur.execute(
+                        """
+                        UPDATE gold_schema.estimation_items
+                        SET stone_weight_gms = %s,
+                            net_weight_gms = %s,
+                            gold_rate_per_gm = %s,
+                            gross_amount = %s,
+                            deduction_percentage = %s,
+                            net_amount = %s
+                        WHERE estimation_item_id = %s
+                        """,
+                        (
+                            payload.stone_weight_gms or 0,
+                            calc_item["net_gold_weight"],
+                            payload.gold_rate_per_gm,
+                            calc_item["gross_amount"],
+                            payload.deduction_percentage or 0,
+                            calc_item["net_amount"],
+                            existing[0]
+                        )
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO gold_schema.estimation_items (
+                            estimation_id, item_name,
+                            quantity, gross_weight_gms,
+                            stone_weight_gms, net_weight_gms,
+                            gold_rate_per_gm, purity_percentage,
+                            gross_amount, deduction_percentage,
+                            net_amount
+                        )
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        """,
+                        (
+                            estimation_id,
+                            item_name,
+                            qty,
+                            gross_weight,
+                            payload.stone_weight_gms or 0,
+                            calc_item["net_gold_weight"],
+                            payload.gold_rate_per_gm,
+                            purity,
+                            calc_item["gross_amount"],
+                            payload.deduction_percentage or 0,
+                            calc_item["net_amount"]
+                        )
+                    )
 
                 estimation_net_weight += float(calc_item["net_gold_weight"])
                 estimation_gross_amount += float(calc_item["gross_amount"])
@@ -1054,15 +1248,17 @@ def add_estimation_item(payload: EstimationItemCreateRequest):
 
             cur.execute(
                 """
-                INSERT INTO gold_schema.estimation_items (
-                    estimation_id, item_name,
-                    quantity, gross_weight_gms,
-                    stone_weight_gms, net_weight_gms,
-                    gold_rate_per_gm, purity_percentage,
-                    gross_amount, deduction_percentage,
-                    net_amount
-                )
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                SELECT estimation_item_id
+                FROM gold_schema.estimation_items
+                WHERE estimation_id = %s
+                  AND item_name = %s
+                  AND quantity = %s
+                  AND gross_weight_gms = %s
+                  AND stone_weight_gms = %s
+                  AND purity_percentage = %s
+                  AND gold_rate_per_gm = %s
+                  AND deduction_percentage = %s
+                LIMIT 1
                 """,
                 (
                     estimation_id,
@@ -1070,14 +1266,60 @@ def add_estimation_item(payload: EstimationItemCreateRequest):
                     payload.quantity,
                     payload.gross_weight_gms,
                     payload.stone_weight_gms,
-                    calc["net_gold_weight"],
-                    payload.gold_rate_per_gm,
                     payload.purity_percentage,
-                    calc["gross_amount"],
-                    payload.deduction_percentage,
-                    calc["net_amount"]
+                    payload.gold_rate_per_gm,
+                    payload.deduction_percentage
                 )
             )
+            existing = cur.fetchone()
+
+            if existing:
+                cur.execute(
+                    """
+                    UPDATE gold_schema.estimation_items
+                    SET net_weight_gms = %s,
+                        gross_amount = %s,
+                        net_amount = %s
+                    WHERE estimation_item_id = %s
+                    """,
+                    (
+                        calc["net_gold_weight"],
+                        calc["gross_amount"],
+                        calc["net_amount"],
+                        existing[0]
+                    )
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO gold_schema.estimation_items (
+                        estimation_id, item_name,
+                        quantity, gross_weight_gms,
+                        stone_weight_gms, net_weight_gms,
+                        gold_rate_per_gm, purity_percentage,
+                        gross_amount, deduction_percentage,
+                        net_amount
+                    )
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    (
+                        estimation_id,
+                        payload.item_name,
+                        payload.quantity,
+                        payload.gross_weight_gms,
+                        payload.stone_weight_gms,
+                        calc["net_gold_weight"],
+                        payload.gold_rate_per_gm,
+                        payload.purity_percentage,
+                        calc["gross_amount"],
+                        payload.deduction_percentage,
+                        calc["net_amount"]
+                    )
+                )
+
+            estimation_net_weight = float(calc["net_gold_weight"])
+            estimation_gross_amount = float(calc["gross_amount"])
+            estimation_net_amount = float(calc["net_amount"])
 
         cur.execute(
             """
@@ -1111,6 +1353,19 @@ def create_payment_invoice(payload: PaymentInvoiceCreateRequest):
     cur = conn.cursor()
     try:
         account_id = get_account_id(cur, payload.mobile)
+
+        cur.execute(
+            "SELECT payment_invoice_id, payment_status FROM gold_schema.payment_invoices WHERE account_id=%s AND invoice_no=%s LIMIT 1",
+            (account_id, payload.invoice_no)
+        )
+        existing_invoice = cur.fetchone()
+
+        if existing_invoice:
+            return {
+                "payment_invoice_id": existing_invoice[0],
+                "invoice_no": payload.invoice_no,
+                "payment_status": existing_invoice[1]
+            }
 
         # Get latest application + estimation
         cur.execute("""
@@ -1200,19 +1455,18 @@ def add_invoice_item(payload: PaymentInvoiceItemCreateRequest):
             raise HTTPException(400, "deduction_percentage must be a percentage between 0 and 100")
 
         cur.execute("""
-            INSERT INTO gold_schema.payment_invoice_items (
-                payment_invoice_id,
-                item_name,
-                weight_before_melting,
-                weight_after_melting,
-                purity_after_melting,
-                gold_rate_per_gm,
-                gross_amount,
-                deduction_percentage,
-                net_amount
-            )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            RETURNING invoice_item_id
+            SELECT invoice_item_id
+            FROM gold_schema.payment_invoice_items
+            WHERE payment_invoice_id = %s
+              AND item_name = %s
+              AND weight_before_melting = %s
+              AND weight_after_melting = %s
+              AND purity_after_melting = %s
+              AND gold_rate_per_gm = %s
+              AND gross_amount = %s
+              AND deduction_percentage = %s
+              AND net_amount = %s
+            LIMIT 1
         """, (
             invoice_id,
             payload.item_name,
@@ -1224,8 +1478,38 @@ def add_invoice_item(payload: PaymentInvoiceItemCreateRequest):
             payload.deduction_percentage,
             payload.net_amount
         ))
+        existing_item = cur.fetchone()
 
-        item_id = cur.fetchone()[0]
+        if existing_item:
+            item_id = existing_item[0]
+        else:
+            cur.execute("""
+                INSERT INTO gold_schema.payment_invoice_items (
+                    payment_invoice_id,
+                    item_name,
+                    weight_before_melting,
+                    weight_after_melting,
+                    purity_after_melting,
+                    gold_rate_per_gm,
+                    gross_amount,
+                    deduction_percentage,
+                    net_amount
+                )
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING invoice_item_id
+            """, (
+                invoice_id,
+                payload.item_name,
+                payload.weight_before_melting,
+                payload.weight_after_melting,
+                payload.purity_after_melting,
+                payload.gold_rate_per_gm,
+                payload.gross_amount,
+                payload.deduction_percentage,
+                payload.net_amount
+            ))
+            item_id = cur.fetchone()[0]
+
         conn.commit()
 
         return {
@@ -1292,33 +1576,51 @@ def add_settlement(payload: PaymentSettlementCreateRequest):
         invoice_id = row[0]
 
         cur.execute("""
-            INSERT INTO gold_schema.payment_settlements (
-                payment_invoice_id,
-                payment_mode,
-                paid_amount,
-                payment_date
-            )
-            VALUES (%s,%s,%s,%s)
-            RETURNING settlement_id
+            SELECT settlement_id
+            FROM gold_schema.payment_settlements
+            WHERE payment_invoice_id = %s
+              AND payment_mode = %s
+              AND paid_amount = %s
+              AND payment_date = %s
+            LIMIT 1
         """, (
             invoice_id,
             payload.payment_mode,
             payload.paid_amount,
             payload.payment_date
         ))
+        existing_settlement = cur.fetchone()
 
-        settlement_id = cur.fetchone()[0]
-        
-        # Update application status from DRAFT to SUBMITTED after successful settlement
-        cur.execute("""
-            UPDATE gold_schema.applications
-            SET status = 'SUBMITTED'
-            WHERE application_id = (
-                SELECT application_id FROM gold_schema.payment_invoices WHERE payment_invoice_id = %s
-            )
-            AND status = 'DRAFT'
-        """, (invoice_id,))
-        
+        if existing_settlement:
+            settlement_id = existing_settlement[0]
+        else:
+            cur.execute("""
+                INSERT INTO gold_schema.payment_settlements (
+                    payment_invoice_id,
+                    payment_mode,
+                    paid_amount,
+                    payment_date
+                )
+                VALUES (%s,%s,%s,%s)
+                RETURNING settlement_id
+            """, (
+                invoice_id,
+                payload.payment_mode,
+                payload.paid_amount,
+                payload.payment_date
+            ))
+            settlement_id = cur.fetchone()[0]
+
+            # Update application status from DRAFT to SUBMITTED after successful settlement
+            cur.execute("""
+                UPDATE gold_schema.applications
+                SET status = 'SUBMITTED'
+                WHERE application_id = (
+                    SELECT application_id FROM gold_schema.payment_invoices WHERE payment_invoice_id = %s
+                )
+                AND status = 'DRAFT'
+            """, (invoice_id,))
+
         conn.commit()
 
         return {
