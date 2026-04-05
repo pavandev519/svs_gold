@@ -285,6 +285,9 @@ class PaymentInvoiceCreateRequest(BaseModel):
     mobile: str
     invoice_no: str
     invoice_date: date
+    total_net_amount: Decimal
+    amount_in_words: Optional[str] = None
+    remarks: Optional[str] = None
 
 
 class PaymentInvoiceResponse(BaseModel):
