@@ -1259,82 +1259,216 @@ def add_estimation_item(payload: EstimationItemCreateRequest):
         conn.close()
 
 
-@app.post("/payments/invoice/create", response_model=PaymentInvoiceResponse)
-def create_payment_invoice(payload: PaymentInvoiceCreateRequest):
+# @app.post("/payments/invoice/create", response_model=PaymentInvoiceResponse)
+# def create_payment_invoice(payload: PaymentInvoiceCreateRequest):
+#     conn = get_connection()
+#     cur = conn.cursor()
+#     try:
+#         account_id = get_account_id(cur, payload.mobile)
+
+#         cur.execute(
+#             "SELECT payment_invoice_id, payment_status FROM gold_schema.payment_invoices WHERE account_id=%s AND invoice_no=%s LIMIT 1",
+#             (account_id, payload.invoice_no)
+#         )
+#         existing_invoice = cur.fetchone()
+
+#         if existing_invoice:
+#             return {
+#                 "payment_invoice_id": existing_invoice[0],
+#                 "invoice_no": payload.invoice_no,
+#                 "payment_status": existing_invoice[1]
+#             }
+
+#         # Get latest application + estimation
+#         cur.execute("""
+#             SELECT a.application_id, e.estimation_id
+#             FROM gold_schema.applications a
+#             JOIN gold_schema.estimation_application_map m
+#                 ON m.application_id = a.application_id
+#             JOIN gold_schema.estimations e
+#                 ON e.estimation_id = m.estimation_id
+#             WHERE a.account_id = %s
+#             ORDER BY a.created_at DESC
+#             LIMIT 1
+#         """, (account_id,))
+#         row = cur.fetchone()
+
+#         if not row:
+#             raise HTTPException(409, "No application/estimation found")
+
+#         application_id, estimation_id = row
+
+#         cur.execute("SELECT COALESCE(SUM(net_amount),0) FROM gold_schema.estimation_items WHERE estimation_id=%s", (estimation_id,))
+#         #payload_total = cur.fetchone()[0]
+
+#         cur.execute("""
+#             INSERT INTO gold_schema.payment_invoices (
+#                 invoice_no,
+#                 account_id,
+#                 application_id,
+#                 estimation_id,
+#                 invoice_date,
+#                 total_net_amount,
+#                 amount_in_words,
+#                 remarks
+#             )
+#             VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+#             RETURNING payment_invoice_id, payment_status
+#         """, (
+#             payload.invoice_no,
+#             account_id,
+#             application_id,
+#             estimation_id,
+#             payload.invoice_date,
+#             payload.total_net_amount,
+#             None,
+#             None
+#             #payload_total,
+#             #payload.amount_in_words,
+#             #payload.remarks
+#         ))
+
+#         invoice_id, status = cur.fetchone()
+#         conn.commit()
+
+#         return {
+#             "payment_invoice_id": invoice_id,
+#             "invoice_no": payload.invoice_no,
+#             "payment_status": status
+#         }
+
+#     finally:
+#         cur.close()
+#         conn.close()
+
+@app.post("/payments/invoice/item", response_model=PaymentInvoiceItemResponse)
+def add_invoice_item(payload: PaymentInvoiceItemCreateRequest):
     conn = get_connection()
     cur = conn.cursor()
     try:
         account_id = get_account_id(cur, payload.mobile)
 
+        # Check if invoice exists by invoice_no
         cur.execute(
-            "SELECT payment_invoice_id, payment_status FROM gold_schema.payment_invoices WHERE account_id=%s AND invoice_no=%s LIMIT 1",
+            "SELECT payment_invoice_id FROM gold_schema.payment_invoices WHERE account_id=%s AND invoice_no=%s LIMIT 1",
             (account_id, payload.invoice_no)
         )
         existing_invoice = cur.fetchone()
 
         if existing_invoice:
-            return {
-                "payment_invoice_id": existing_invoice[0],
-                "invoice_no": payload.invoice_no,
-                "payment_status": existing_invoice[1]
-            }
+            invoice_id = existing_invoice[0]
+        else:
+            # Get latest application + estimation
+            cur.execute("""
+                SELECT a.application_id, e.estimation_id
+                FROM gold_schema.applications a
+                JOIN gold_schema.estimation_application_map m
+                    ON m.application_id = a.application_id
+                JOIN gold_schema.estimations e
+                    ON e.estimation_id = m.estimation_id
+                WHERE a.account_id = %s
+                ORDER BY a.created_at DESC
+                LIMIT 1
+            """, (account_id,))
+            row = cur.fetchone()
 
-        # Get latest application + estimation
-        cur.execute("""
-            SELECT a.application_id, e.estimation_id
-            FROM gold_schema.applications a
-            JOIN gold_schema.estimation_application_map m
-                ON m.application_id = a.application_id
-            JOIN gold_schema.estimations e
-                ON e.estimation_id = m.estimation_id
-            WHERE a.account_id = %s
-            ORDER BY a.created_at DESC
-            LIMIT 1
-        """, (account_id,))
-        row = cur.fetchone()
+            if not row:
+                raise HTTPException(409, "No application/estimation found")
 
-        if not row:
-            raise HTTPException(409, "No application/estimation found")
+            application_id, estimation_id = row
 
-        application_id, estimation_id = row
-
-        cur.execute("SELECT COALESCE(SUM(net_amount),0) FROM gold_schema.estimation_items WHERE estimation_id=%s", (estimation_id,))
-        #payload_total = cur.fetchone()[0]
-
-        cur.execute("""
-            INSERT INTO gold_schema.payment_invoices (
-                invoice_no,
+            # Create new invoice
+            cur.execute("""
+                INSERT INTO gold_schema.payment_invoices (
+                    invoice_no,
+                    account_id,
+                    application_id,
+                    estimation_id,
+                    invoice_date,
+                    total_net_amount
+                )
+                VALUES (%s,%s,%s,%s,%s,%s)
+                RETURNING payment_invoice_id
+            """, (
+                payload.invoice_no,
                 account_id,
                 application_id,
                 estimation_id,
-                invoice_date,
-                total_net_amount,
-                amount_in_words,
-                remarks
-            )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-            RETURNING payment_invoice_id, payment_status
-        """, (
-            payload.invoice_no,
-            account_id,
-            application_id,
-            estimation_id,
-            payload.invoice_date,
-            payload.total_net_amount,
-            None,
-            None
-            #payload_total,
-            #payload.amount_in_words,
-            #payload.remarks
-        ))
+                payload.invoice_date,
+                0  # initial total, will update
+            ))
+            invoice_id = cur.fetchone()[0]
 
-        invoice_id, status = cur.fetchone()
+        if payload.deduction_percentage < 0 or payload.deduction_percentage > 100:
+            raise HTTPException(400, "deduction_percentage must be a percentage between 0 and 100")
+
+        cur.execute("""
+            SELECT invoice_item_id
+            FROM gold_schema.payment_invoice_items
+            WHERE payment_invoice_id = %s
+              AND item_name = %s
+              AND weight_before_melting = %s
+              AND weight_after_melting = %s
+              AND purity_after_melting = %s
+              AND gold_rate_per_gm = %s
+              AND gross_amount = %s
+              AND deduction_percentage = %s
+              AND net_amount = %s
+            LIMIT 1
+        """, (
+            invoice_id,
+            payload.item_name,
+            payload.weight_before_melting,
+            payload.weight_after_melting,
+            payload.purity_after_melting,
+            payload.gold_rate_per_gm,
+            payload.gross_amount,
+            payload.deduction_percentage,
+            payload.net_amount
+        ))
+        existing_item = cur.fetchone()
+
+        if existing_item:
+            item_id = existing_item[0]
+        else:
+            cur.execute("""
+                INSERT INTO gold_schema.payment_invoice_items (
+                    payment_invoice_id,
+                    item_name,
+                    weight_before_melting,
+                    weight_after_melting,
+                    purity_after_melting,
+                    gold_rate_per_gm,
+                    gross_amount,
+                    deduction_percentage,
+                    net_amount
+                )
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING invoice_item_id
+            """, (
+                invoice_id,
+                payload.item_name,
+                payload.weight_before_melting,
+                payload.weight_after_melting,
+                payload.purity_after_melting,
+                payload.gold_rate_per_gm,
+                payload.gross_amount,
+                payload.deduction_percentage,
+                payload.net_amount
+            ))
+            item_id = cur.fetchone()[0]
+
+        # Update total_net_amount in invoice
+        cur.execute(
+            "UPDATE gold_schema.payment_invoices SET total_net_amount = (SELECT COALESCE(SUM(net_amount),0) FROM gold_schema.payment_invoice_items WHERE payment_invoice_id=%s) WHERE payment_invoice_id=%s",
+            (invoice_id, invoice_id)
+        )
+
         conn.commit()
 
         return {
-            "payment_invoice_id": invoice_id,
-            "invoice_no": payload.invoice_no,
-            "payment_status": status
+            "invoice_item_id": item_id,
+            "payment_invoice_id": invoice_id
         }
 
     finally:
