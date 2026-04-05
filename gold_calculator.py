@@ -11,15 +11,22 @@ def calculate_gold_estimation(
         raise ValueError("Stone weight cannot exceed gross weight")
 
     purity_percentage = purity_percentage.quantize(Decimal('1'), rounding='ROUND_FLOOR')
-    deductions = deductions.quantize(Decimal('1'), rounding='ROUND_FLOOR')
+    deductions = deductions.quantize(Decimal('0.01'), rounding='ROUND_DOWN')
     gross_weight_gms = gross_weight_gms.quantize(Decimal('0.01'), rounding='ROUND_DOWN')
     stone_weight_gms = stone_weight_gms.quantize(Decimal('0.01'), rounding='ROUND_DOWN')
 
-    net_gold_weight = round(gross_weight_gms - stone_weight_gms,2)
-    pure_gold_weight = round(net_gold_weight * (purity_percentage / Decimal("100")),2)
-    gross_amount = round(pure_gold_weight * gold_rate_per_gm,2)
-    #net_amount = round(gross_amount - deductions,2)
-    net_amount = round(gross_amount - (gross_amount * (deductions / Decimal("100"))),2)
+    net_gold_weight = gross_weight_gms - stone_weight_gms
+    pure_gold_weight = net_gold_weight * (purity_percentage / Decimal("100"))
+    gross_amount = pure_gold_weight * gold_rate_per_gm
+    net_amount = gross_amount - (gross_amount * (deductions / Decimal("100")))
+
+    return {
+        "net_gold_weight": net_gold_weight,
+        "pure_weight": pure_gold_weight,
+        "deductions": deductions,
+        "gross_amount": gross_amount,
+        "net_amount": net_amount
+    }
 
     return {
         "net_gold_weight": net_gold_weight,
