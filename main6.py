@@ -1158,74 +1158,30 @@ def add_estimation_item(payload: EstimationItemCreateRequest):
 
                 cur.execute(
                     """
-                    SELECT estimation_item_id
-                    FROM gold_schema.estimation_items
-                    WHERE estimation_id = %s
-                      AND item_name = %s
-                      AND quantity = %s
-                      AND gross_weight_gms = %s
-                      AND purity_percentage = %s
-                    LIMIT 1
+                    INSERT INTO gold_schema.estimation_items (
+                        estimation_id, item_name,
+                        quantity, gross_weight_gms,
+                        stone_weight_gms, net_weight_gms,
+                        gold_rate_per_gm, purity_percentage,
+                        gross_amount, deduction_percentage,
+                        net_amount
+                    )
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """,
                     (
                         estimation_id,
                         item_name,
                         qty,
                         gross_weight,
-                        purity
+                        payload.stone_weight_gms or 0,
+                        calc_item["net_gold_weight"],
+                        payload.gold_rate_per_gm,
+                        purity,
+                        calc_item["gross_amount"],
+                        payload.deduction_percentage or 0,
+                        calc_item["net_amount"]
                     )
                 )
-                existing = cur.fetchone()
-
-                if existing:
-                    cur.execute(
-                        """
-                        UPDATE gold_schema.estimation_items
-                        SET stone_weight_gms = %s,
-                            net_weight_gms = %s,
-                            gold_rate_per_gm = %s,
-                            gross_amount = %s,
-                            deduction_percentage = %s,
-                            net_amount = %s
-                        WHERE estimation_item_id = %s
-                        """,
-                        (
-                            payload.stone_weight_gms or 0,
-                            calc_item["net_gold_weight"],
-                            payload.gold_rate_per_gm,
-                            calc_item["gross_amount"],
-                            payload.deduction_percentage or 0,
-                            calc_item["net_amount"],
-                            existing[0]
-                        )
-                    )
-                else:
-                    cur.execute(
-                        """
-                        INSERT INTO gold_schema.estimation_items (
-                            estimation_id, item_name,
-                            quantity, gross_weight_gms,
-                            stone_weight_gms, net_weight_gms,
-                            gold_rate_per_gm, purity_percentage,
-                            gross_amount, deduction_percentage,
-                            net_amount
-                        )
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                        """,
-                        (
-                            estimation_id,
-                            item_name,
-                            qty,
-                            gross_weight,
-                            payload.stone_weight_gms or 0,
-                            calc_item["net_gold_weight"],
-                            payload.gold_rate_per_gm,
-                            purity,
-                            calc_item["gross_amount"],
-                            payload.deduction_percentage or 0,
-                            calc_item["net_amount"]
-                        )
-                    )
 
                 estimation_net_weight += float(calc_item["net_gold_weight"])
                 estimation_gross_amount += float(calc_item["gross_amount"])
@@ -1248,17 +1204,15 @@ def add_estimation_item(payload: EstimationItemCreateRequest):
 
             cur.execute(
                 """
-                SELECT estimation_item_id
-                FROM gold_schema.estimation_items
-                WHERE estimation_id = %s
-                  AND item_name = %s
-                  AND quantity = %s
-                  AND gross_weight_gms = %s
-                  AND stone_weight_gms = %s
-                  AND purity_percentage = %s
-                  AND gold_rate_per_gm = %s
-                  AND deduction_percentage = %s
-                LIMIT 1
+                INSERT INTO gold_schema.estimation_items (
+                    estimation_id, item_name,
+                    quantity, gross_weight_gms,
+                    stone_weight_gms, net_weight_gms,
+                    gold_rate_per_gm, purity_percentage,
+                    gross_amount, deduction_percentage,
+                    net_amount
+                )
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """,
                 (
                     estimation_id,
@@ -1266,60 +1220,18 @@ def add_estimation_item(payload: EstimationItemCreateRequest):
                     payload.quantity,
                     payload.gross_weight_gms,
                     payload.stone_weight_gms,
-                    payload.purity_percentage,
+                    calc["net_gold_weight"],
                     payload.gold_rate_per_gm,
-                    payload.deduction_percentage
+                    payload.purity_percentage,
+                    calc["gross_amount"],
+                    payload.deduction_percentage,
+                    calc["net_amount"]
                 )
             )
-            existing = cur.fetchone()
 
-            if existing:
-                cur.execute(
-                    """
-                    UPDATE gold_schema.estimation_items
-                    SET net_weight_gms = %s,
-                        gross_amount = %s,
-                        net_amount = %s
-                    WHERE estimation_item_id = %s
-                    """,
-                    (
-                        calc["net_gold_weight"],
-                        calc["gross_amount"],
-                        calc["net_amount"],
-                        existing[0]
-                    )
-                )
-            else:
-                cur.execute(
-                    """
-                    INSERT INTO gold_schema.estimation_items (
-                        estimation_id, item_name,
-                        quantity, gross_weight_gms,
-                        stone_weight_gms, net_weight_gms,
-                        gold_rate_per_gm, purity_percentage,
-                        gross_amount, deduction_percentage,
-                        net_amount
-                    )
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    """,
-                    (
-                        estimation_id,
-                        payload.item_name,
-                        payload.quantity,
-                        payload.gross_weight_gms,
-                        payload.stone_weight_gms,
-                        calc["net_gold_weight"],
-                        payload.gold_rate_per_gm,
-                        payload.purity_percentage,
-                        calc["gross_amount"],
-                        payload.deduction_percentage,
-                        calc["net_amount"]
-                    )
-                )
-
-            estimation_net_weight = float(calc["net_gold_weight"])
-            estimation_gross_amount = float(calc["gross_amount"])
-            estimation_net_amount = float(calc["net_amount"])
+            estimation_net_weight += float(calc["net_gold_weight"])
+            estimation_gross_amount += float(calc["gross_amount"])
+            estimation_net_amount += float(calc["net_amount"])
 
         cur.execute(
             """
@@ -1337,9 +1249,9 @@ def add_estimation_item(payload: EstimationItemCreateRequest):
         conn.commit()
         return {
             "estimation_id": estimation_id,
-            "net_weight_gms": estimation_net_weight,
-            "gross_amount": estimation_gross_amount,
-            "net_amount": estimation_net_amount,
+            "net_weight_gms": round(estimation_net_weight, 2),
+            "gross_amount": round(estimation_gross_amount, 2),
+            "net_amount": round(estimation_net_amount, 2),
             "status": "ESTIMATED"
         }
     finally:
