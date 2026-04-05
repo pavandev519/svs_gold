@@ -12,8 +12,8 @@ def calculate_gold_estimation(
 
     purity_percentage = purity_percentage.quantize(Decimal('1'), rounding='ROUND_FLOOR')
     deductions = deductions.quantize(Decimal('1'), rounding='ROUND_FLOOR')
-    gross_weight_gms = gross_weight_gms.quantize(Decimal('1'), rounding='ROUND_FLOOR')
-    # stone_weight_gms = stone_weight_gms.quantize(Decimal('1'), rounding='ROUND_FLOOR')
+    gross_weight_gms = gross_weight_gms.quantize(Decimal('0.01'), rounding='ROUND_DOWN')
+    stone_weight_gms = stone_weight_gms.quantize(Decimal('0.01'), rounding='ROUND_DOWN')
 
     net_gold_weight = round(gross_weight_gms - stone_weight_gms,2)
     pure_gold_weight = round(net_gold_weight * (purity_percentage / Decimal("100")),2)
