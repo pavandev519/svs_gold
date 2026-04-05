@@ -1321,9 +1321,11 @@ def create_payment_invoice(payload: PaymentInvoiceCreateRequest):
             estimation_id,
             payload.invoice_date,
             payload.total_net_amount,
+            None,
+            None
             #payload_total,
-            payload.amount_in_words,
-            payload.remarks
+            #payload.amount_in_words,
+            #payload.remarks
         ))
 
         invoice_id, status = cur.fetchone()
