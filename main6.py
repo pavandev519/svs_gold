@@ -1299,7 +1299,7 @@ def create_payment_invoice(payload: PaymentInvoiceCreateRequest):
         application_id, estimation_id = row
 
         cur.execute("SELECT COALESCE(SUM(net_amount),0) FROM gold_schema.estimation_items WHERE estimation_id=%s", (estimation_id,))
-        payload_total = cur.fetchone()[0]
+        #payload_total = cur.fetchone()[0]
 
         cur.execute("""
             INSERT INTO gold_schema.payment_invoices (
@@ -1320,7 +1320,8 @@ def create_payment_invoice(payload: PaymentInvoiceCreateRequest):
             application_id,
             estimation_id,
             payload.invoice_date,
-            payload_total,
+            payload.total_net_amount,
+            #payload_total,
             None,
             None
         ))
