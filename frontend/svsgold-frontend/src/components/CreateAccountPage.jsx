@@ -40,14 +40,23 @@ export default function CreateAccountPage({ loginData, onBackToLogin, onSuccess 
     pincode: '',
     address_text: '',
     addresses: [],
-    bank_accounts: [],
+    bank_accounts: [{
+      id: Date.now(),
+      bank_name: '',
+      branch: '',
+      account_number: '',
+      ifsc_code: '',
+      account_holder_name: '',
+      account_holder_type: 'Self',
+      is_primary: true
+    }],
     documents: []
   })
 
   const [openSections, setOpenSections] = useState({
     account: true,
     address: true,
-    bank: false,
+    bank: true,
     documents: true   // Documents always visible
   })
 
@@ -84,7 +93,33 @@ export default function CreateAccountPage({ loginData, onBackToLogin, onSuccess 
 
     if (!isValid) {
       setValidationErrors(errors)
-      setError('Please fix all validation errors before submitting.')
+
+      // Build specific error messages grouped by section
+      const sections = []
+      const accFields = { first_name: 'First Name', last_name: 'Last Name', mobile: 'Mobile', email: 'Email', aadhar_no: 'Aadhar No', pan_no: 'PAN No', date_of_birth: 'Date of Birth', phone: 'Phone' }
+      const accErrors = Object.keys(errors).filter(k => accFields[k]).map(k => accFields[k])
+      if (accErrors.length > 0) sections.push(`Account Information: ${accErrors.join(', ')}`)
+
+      const addrErrors = Object.keys(errors).filter(k => k.startsWith('address_')).map(k => {
+        const idx = k.includes('_0_') ? 'Present' : 'Permanent'
+        const field = k.includes('_line') ? 'Address Line' : k.includes('_pincode') ? 'Pincode' : 'Field'
+        return `${idx} ${field}`
+      })
+      if (addrErrors.length > 0) sections.push(`Address: ${[...new Set(addrErrors)].join(', ')}`)
+
+      const bankErrors = Object.keys(errors).filter(k => k.startsWith('bank_')).map(k => {
+        if (k === 'bank_required') return 'Primary bank account details are required'
+        const parts = k.split('_')
+        const num = Number(parts[1]) + 1
+        const field = k.includes('_name') ? 'Bank Name' : k.includes('_account') ? 'Account Number' : k.includes('_ifsc') ? 'IFSC Code' : k.includes('_holder') ? 'Account Holder' : 'Field'
+        return `Bank ${num} — ${field}`
+      })
+      if (bankErrors.length > 0) sections.push(`Bank Accounts: ${bankErrors.join(', ')}`)
+
+      const docErrors = Object.keys(errors).filter(k => k.startsWith('doc_')).map(k => k.replace('doc_', ''))
+      if (docErrors.length > 0) sections.push(`Documents: Upload ${docErrors.join(', ')}`)
+
+      setError(sections.length > 0 ? sections.join(' | ') : 'Please fix all validation errors before submitting.')
       window.scrollTo({ top: 0, behavior: 'smooth' })
       return
     }
@@ -168,6 +203,21 @@ export default function CreateAccountPage({ loginData, onBackToLogin, onSuccess 
       }
 
       setSuccess('Account created successfully!')
+
+      // Save customer info to localStorage for ApplicationForm pre-fill
+      localStorage.setItem('svs_customer_info', JSON.stringify({
+        name: [formData.first_name, formData.last_name].filter(Boolean).join(' '),
+        first_name: formData.first_name || '',
+        last_name: formData.last_name || '',
+        mobile: formData.mobile || '',
+        email: formData.email || '',
+        gender: formData.gender || '',
+        date_of_birth: formData.date_of_birth || '',
+        aadhar_no: formData.aadhar_no || '',
+        pan_no: formData.pan_no || '',
+        occupation: formData.occupation || '',
+        addresses: formData.addresses || []
+      }))
 
       setTimeout(() => {
         onSuccess(accountResponse.data)

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { ChevronLeft, Loader, AlertCircle, Download, Printer } from 'lucide-react'
-import { applicationsAPI } from '../api/api'
-import html2pdf from "html2pdf.js";
+import { accountsAPI, applicationsAPI } from '../api/api'
+import PdfGenerator from '../utils/PdfGenerator'
 import { useNavigate } from 'react-router-dom'
 
 export default function ApplicationPreview({ application, userIdentifier, onBack }) {
@@ -11,45 +11,76 @@ export default function ApplicationPreview({ application, userIdentifier, onBack
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [downloading, setDownloading] = useState(false)
+  const [branchInfo, setBranchInfo] = useState(null)
 
   useEffect(() => {
     (async () => {
       try {
         setLoading(true)
-        const r = await applicationsAPI.getFinalPreview(userIdentifier)
-        const d = r.data
-        if (application) d.application = { ...d.application, ...application }
-        setPreviewData(d)
-      } catch { setError('Failed to load preview data.') }
+
+        // Fetch customer data
+        const res = await accountsAPI.searchCustomer(userIdentifier)
+        const d = res.data || {}
+        const appId = application?.application_id
+
+        // Find the application from search API to get correct place
+        const allApps = d.applications || []
+        const appObj = appId ? allApps.find(a => a.application_id === appId) : allApps[0] || {}
+
+        const allPledges = d.pledge_details || []
+        const appPledge = appId ? allPledges.find(p => p.application_id === appId) : allPledges[0]
+        const allOrnaments = d.ornaments || []
+        const appOrnaments = appId ? allOrnaments.filter(o => o.application_id === appId) : allOrnaments
+
+        const preview = {
+          account: d.customer || {},
+          addresses: d.addresses || [],
+          documents: d.documents || [],
+          bank_account: d.bank_accounts?.[0] || null,
+          pledge_details: appPledge || {},
+          ornaments: appOrnaments
+        }
+
+        if (application) preview.application = { ...preview.application, ...application }
+        setPreviewData(preview)
+        setError('')
+
+        // Fetch branch info using place from search API application
+        try {
+          const br = await applicationsAPI.getBranches()
+          const branches = br.data?.branches || []
+          const place = (appObj?.place || application?.place || '').toLowerCase().trim()
+          if (place) {
+            let matched = branches.find(b => b.branch_name.toLowerCase() === place)
+            if (!matched) matched = branches.find(b => b.branch_name.toLowerCase().includes(place) || place.includes(b.branch_name.toLowerCase()))
+            if (matched) setBranchInfo(matched)
+          }
+        } catch {}
+
+      } catch (err) {
+        console.log('Preview load error:', err)
+        // Only show error if no data was loaded
+        if (!previewData) setError('Failed to load preview data.')
+      }
       finally { setLoading(false) }
     })()
   }, [application, userIdentifier])
 
- const handleDownloadPdf = () => {
-  const element = printRef.current
-  if (!element) return
 
-  const opt = {
-    margin: 10,
-    filename: `${previewData?.application?.application_no || "application"}.pdf`,
-    image: { type: "jpeg", quality: 1 },
-    html2canvas: {
-      scale: 2,
-      useCORS: true,
-      scrollY: 0
-    },
-    jsPDF: {
-      unit: "mm",
-      format: "a4",
-      orientation: "portrait"
-    },
-    pagebreak: {
-      mode: ["css", "legacy"]
-    }
+  const handleDownloadPdf = async () => {
+    if (!previewData) return
+    try {
+      setDownloading(true)
+      const g = new PdfGenerator()
+      const t = application?.application_type || previewData.application?.application_type || ''
+      const b = t === 'PLEDGE_RELEASE' ? await g.generatePledgeReleasePdf(previewData) : await g.generateDirectBuyingPdf(previewData)
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(new Blob([b], { type: 'application/pdf' }))
+      a.download = `${previewData.application?.application_no || 'application'}.pdf`
+      a.click(); URL.revokeObjectURL(a.href)
+    } catch { setError('Failed to generate PDF.') }
+    finally { setDownloading(false) }
   }
-
-  html2pdf().set(opt).from(element).save()
-}
 
   const handlePrint = () => {
     const h = printRef.current?.innerHTML; if (!h) return
@@ -75,9 +106,9 @@ export default function ApplicationPreview({ application, userIdentifier, onBack
   const age = (d) => { if (!d) return ''; const b = new Date(d), t = new Date(); let a = t.getFullYear() - b.getFullYear(); if (t.getMonth() < b.getMonth() || (t.getMonth() === b.getMonth() && t.getDate() < b.getDate())) a--; return a }
   const cur = (n) => (!n && n !== 0) ? '' : Number(n).toLocaleString('en-IN')
 
-  // Find photo from documents
+  // Find photo from documents or account
   const photoDoc = docs.find(d => /photo/i.test(d.document_type))
-  const photoUrl = photoDoc?.file_path || ''
+  const photoUrl = acc.photo_url || photoDoc?.file_path || ''
 
   let tQ = 0, tW = 0
   ornaments.forEach(o => { tQ += Number(o.quantity) || 0; tW += Number(o.approx_weight_gms) || 0 })
@@ -99,9 +130,6 @@ export default function ApplicationPreview({ application, userIdentifier, onBack
       {/* Action bar */}
       <div className="flex items-center justify-between no-print">
         <button onClick={onBack} className="flex items-center gap-2 px-4 py-2 text-amber-700 hover:bg-amber-50 rounded-xl font-medium transition-colors"><ChevronLeft size={20} /> Back to Applications</button>
-        <div className="flex gap-3">
-          <button onClick={handleDownloadPdf} disabled={downloading} className="flex items-center gap-2 px-5 py-2.5 text-white rounded-xl shadow-lg font-medium transition-all disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#c9943a,#a36e24)' }}><Download size={18} /> {downloading ? 'Generating...' : 'Download PDF'}</button>
-        </div>
       </div>
 
       {error && <div className="flex items-start gap-3 p-4 bg-red-50 border-2 border-red-200 rounded-xl"><AlertCircle className="text-red-600 flex-shrink-0 mt-0.5" size={20} /><span className="text-sm text-red-700">{error}</span></div>}
@@ -116,9 +144,8 @@ export default function ApplicationPreview({ application, userIdentifier, onBack
           <div style={{ background: hBg, padding: '18px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={{ color: '#fff', lineHeight: '1.5' }}>
               <div style={{ fontSize: '16px', fontWeight: 'bold' }}>SVS GOLD PRIVATE LIMITED</div>
-              <div style={{ fontSize: '10px', opacity: .85 }}>3-4-659/3, YMCA, Narayanguda,</div>
-              <div style={{ fontSize: '10px', opacity: .85 }}>Himayathnagar, Hyderabad - 29</div>
-              <div style={{ fontSize: '10px', opacity: .85 }}>98855 88220</div>
+              <div style={{ fontSize: '10px', opacity: .85 }}>{branchInfo?.full_address_txt}</div>
+              <div style={{ fontSize: '10px', opacity: .85 }}>{branchInfo?.phone_number}</div>
               <div style={{ fontSize: '10px', opacity: .85 }}>www.svsgold.com</div>
             </div>
             <div style={{ textAlign: 'center', color: '#fff' }}>
@@ -161,11 +188,11 @@ export default function ApplicationPreview({ application, userIdentifier, onBack
                 </tr>
                 <tr>
                   <td style={lbl}>Mobile No.</td>
-                  <td style={val}>{app.mobile || acc.mobile || ''}</td>
+                  <td style={val}>{app.mobile || acc.mobile || userIdentifier || ''}</td>
                   <td style={lbl}>Aadhar No.</td>
-                  <td style={val}>{acc.aadhar_no || ''}</td>
+                  <td style={val}>{acc.aadhar_no != null ? String(acc.aadhar_no) : ''}</td>
                   <td style={lbl}>PAN No.</td>
-                  <td style={val}>{acc.pan_no || ''}</td>
+                  <td style={val}>{acc.pan_no != null ? String(acc.pan_no) : ''}</td>
                 </tr>
                 <tr>
                   <td style={lbl}>Present Address</td>
@@ -257,7 +284,7 @@ export default function ApplicationPreview({ application, userIdentifier, onBack
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '10px' }}>
               <table style={{ fontSize: '11px', borderCollapse: 'collapse' }}><tbody>
                 <tr><td style={lbl}>Date</td><td style={{ ...val, minWidth: '150px' }}>{app.application_date || ''}</td></tr>
-                <tr><td style={lbl}>Place</td><td style={val}>{app.place || ''}</td></tr>
+                <tr><td style={lbl}>Place</td><td style={val}>{app.branch || ''}</td></tr>
               </tbody></table>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ width: '220px', borderBottom: '1px solid #666', paddingBottom: '40px', marginBottom: '4px' }}></div>
@@ -265,9 +292,6 @@ export default function ApplicationPreview({ application, userIdentifier, onBack
               </div>
             </div>
           </div>
-
-           <div style={{pageBreakBefore: 'always',
- breakBefore: 'page'}}></div>
 
           {/* ================================================================ */}
           {/*  PAGE 2: TERMS & CONDITIONS                                     */}
@@ -308,16 +332,13 @@ export default function ApplicationPreview({ application, userIdentifier, onBack
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '24px' }}>
               <table style={{ fontSize: '11px', borderCollapse: 'collapse' }}><tbody>
                 <tr><td style={lbl}>Date</td><td style={{ ...val, minWidth: '150px' }}>{app.application_date || ''}</td></tr>
-                <tr><td style={lbl}>Place</td><td style={val}>{app.place || ''}</td></tr>
+                <tr><td style={lbl}>Place</td><td style={val}>{app.branch || ''}</td></tr>
               </tbody></table>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ width: '220px', borderBottom: '1px solid #666', paddingBottom: '40px', marginBottom: '4px' }}></div>
                 <div style={{ fontSize: '10px', color: '#555' }}>Customer Signature / Thumb Impression</div>
               </div>
             </div>
-
-              <div style={{pageBreakBefore: 'always',
- breakBefore: 'page'}}></div>
 
             {/* FOR OFFICE USE ONLY */}
             <div style={{ borderTop: '2px solid #2c5f8a', paddingTop: '16px' }}>
@@ -342,18 +363,24 @@ export default function ApplicationPreview({ application, userIdentifier, onBack
       </div>
 
       {/* BOTTOM ACTIONS */}
-      <div className="flex gap-3">
-  <button
-    onClick={handleDownloadPdf}
-    className="flex items-center gap-2 px-5 py-2.5 text-white rounded-xl shadow-lg font-medium"
-    style={{ background: "linear-gradient(135deg,#c9943a,#a36e24)" }}
-  >
-    <Download size={18} /> Download PDF
-  </button>
-</div>
-      <button onClick={() => navigate('/estimation', { state: { application: previewData } })} className="w-full py-4 text-white font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 text-lg transition-all no-print" style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 14px rgba(22,163,74,0.3)' }}>
-        Accept & Continue to Estimation →
-      </button>
+      {(() => {
+        const status = (application?.status || app.status || '').toUpperCase()
+        const isSubmitted = ['SUBMITTED','APPROVED','COMPLETED'].includes(status)
+        return (
+          <>
+            <div className="flex justify-center no-print">
+              <button onClick={handlePrint} className="px-8 py-3 bg-white hover:bg-gray-50 text-gray-700 font-bold rounded-xl shadow-md flex items-center justify-center gap-2 border border-gray-200 transition-all"><Printer size={20} /> Print Application</button>
+            </div>
+            {!isSubmitted && (
+              <div className="flex justify-center no-print">
+                <button onClick={() => navigate('/estimation', { state: { application: previewData } })} className="px-10 py-3 text-white font-semibold rounded-xl shadow-lg flex items-center justify-center gap-2 text-sm transition-all hover:-translate-y-0.5" style={{ background: 'linear-gradient(135deg,#16a34a,#15803d)', boxShadow: '0 4px 14px rgba(22,163,74,0.3)' }}>
+                  Accept & Continue to Estimation →
+                </button>
+              </div>
+            )}
+          </>
+        )
+      })()}
     </div>
   )
 }
