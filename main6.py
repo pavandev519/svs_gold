@@ -8,7 +8,7 @@ from models5 import (
     AccountCheckRequest, AccountCheckResponse,
     AccountCreateRequest, AccountCreateResponse,
     AccountUpdateRequest,
-    ApplicationCreateRequest, ApplicationResponse,
+    ApplicationCreateRequest, ApplicationResponse, ApplicationDeleteRequest,
     ApplicationListItem, ApplicationListResponse,
     OrnamentCreateRequest, OrnamentCreateResponse,
     EstimationItemCreateRequest, EstimationResponse,
@@ -61,6 +61,383 @@ def get_account_id(cur, mobile: str) -> int:
         raise HTTPException(404, "Account not found")
 
     return account_id
+
+
+def fetch_customer_by_mobile(cur, mobile: str):
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.accounts
+        WHERE mobile = %s
+        """,
+        (mobile,)
+    )
+    customer = cur.fetchone()
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+    return customer
+
+
+def fetch_applications_for_account(cur, account_id: int):
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.applications
+        WHERE account_id = %s
+        ORDER BY created_at DESC
+        """,
+        (account_id,)
+    )
+    return cur.fetchall()
+
+
+def fetch_application_ids(cur, account_id: int):
+    cur.execute(
+        """
+        SELECT application_id
+        FROM gold_schema.applications
+        WHERE account_id = %s
+        ORDER BY created_at DESC
+        """,
+        (account_id,)
+    )
+    return [row["application_id"] for row in cur.fetchall()]
+
+
+def fetch_estimations_for_account(cur, account_id: int):
+    cur.execute(
+        """
+        SELECT e.*, m.application_id
+        FROM gold_schema.estimations e
+        LEFT JOIN gold_schema.estimation_application_map m
+            ON e.estimation_id = m.estimation_id
+        WHERE e.account_id = %s
+        ORDER BY e.estimation_date DESC, e.created_at DESC
+        """,
+        (account_id,)
+    )
+    estimations = cur.fetchall()
+
+    estimation_ids = [est["estimation_id"] for est in estimations]
+    items_by_estimation = {}
+    if estimation_ids:
+        cur.execute(
+            """
+            SELECT *
+            FROM gold_schema.estimation_items
+            WHERE estimation_id = ANY(%s)
+            ORDER BY estimation_id, created_at ASC
+            """,
+            (estimation_ids,)
+        )
+        for item in cur.fetchall():
+            items_by_estimation.setdefault(item["estimation_id"], []).append(item)
+
+    for estimation in estimations:
+        estimation["items"] = items_by_estimation.get(estimation["estimation_id"], [])
+
+    return estimations
+
+
+def fetch_invoices_for_account(cur, account_id: int):
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.payment_invoices
+        WHERE account_id = %s
+        ORDER BY created_at DESC
+        """,
+        (account_id,)
+    )
+    invoices = cur.fetchall()
+
+    invoice_ids = [invoice["payment_invoice_id"] for invoice in invoices]
+    items_by_invoice = {}
+    settlements_by_invoice = {}
+    if invoice_ids:
+        cur.execute(
+            """
+            SELECT *
+            FROM gold_schema.payment_invoice_items
+            WHERE payment_invoice_id = ANY(%s)
+            ORDER BY payment_invoice_id, created_at ASC
+            """,
+            (invoice_ids,)
+        )
+        for item in cur.fetchall():
+            items_by_invoice.setdefault(item["payment_invoice_id"], []).append(item)
+
+        cur.execute(
+            """
+            SELECT *
+            FROM gold_schema.payment_settlements
+            WHERE payment_invoice_id = ANY(%s)
+            ORDER BY payment_invoice_id, payment_date DESC, created_at DESC
+            """,
+            (invoice_ids,)
+        )
+        for settlement in cur.fetchall():
+            settlements_by_invoice.setdefault(settlement["payment_invoice_id"], []).append(settlement)
+
+    for invoice in invoices:
+        invoice["items"] = items_by_invoice.get(invoice["payment_invoice_id"], [])
+        invoice["settlements"] = settlements_by_invoice.get(invoice["payment_invoice_id"], [])
+
+    return invoices
+
+
+def fetch_account_addresses(cur, account_id: int):
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.addresses
+        WHERE account_id = %s
+        ORDER BY created_at ASC
+        """,
+        (account_id,)
+    )
+    return cur.fetchall()
+
+
+def fetch_bank_accounts(cur, account_id: int):
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.bank_accounts
+        WHERE account_id = %s
+        ORDER BY is_primary DESC, created_at ASC
+        """,
+        (account_id,)
+    )
+    return cur.fetchall()
+
+
+def fetch_account_documents(cur, account_id: int):
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.account_documents
+        WHERE account_id = %s
+        ORDER BY uploaded_at DESC
+        """,
+        (account_id,)
+    )
+    return cur.fetchall()
+
+
+def fetch_ornaments_for_applications(cur, application_ids):
+    if not application_ids:
+        return []
+
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.ornaments
+        WHERE application_id = ANY(%s)
+        ORDER BY application_id, created_at ASC
+        """,
+        (application_ids,)
+    )
+    return cur.fetchall()
+
+
+def fetch_ornaments_for_application(cur, account_id: int, application_id: int):
+    cur.execute(
+        """
+        SELECT a.application_id, a.application_no, a.status, a.total_quantity, a.total_weight_gms
+        FROM gold_schema.applications a
+        WHERE a.account_id = %s AND a.application_id = %s
+        LIMIT 1
+        """,
+        (account_id, application_id)
+    )
+    application = cur.fetchone()
+    if not application:
+        raise HTTPException(404, "Application not found")
+
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.ornaments
+        WHERE application_id = %s
+        ORDER BY created_at ASC, item_id ASC
+        """,
+        (application_id,)
+    )
+    ornaments = cur.fetchall()
+
+    total_quantity = application.get("total_quantity") if isinstance(application, dict) else application[3]
+    total_weight_gms = application.get("total_weight_gms") if isinstance(application, dict) else application[4]
+
+    return {
+        "application": application,
+        "ornaments": ornaments,
+        "summary": {
+            "count": len(ornaments),
+            "total_quantity": int(total_quantity or 0),
+            "total_weight_gms": float(total_weight_gms or 0)
+        }
+    }
+
+
+def fetch_estimation_preview_context(cur, account_id: int, application_id: int):
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.accounts
+        WHERE account_id = %s
+        LIMIT 1
+        """,
+        (account_id,)
+    )
+    customer = cur.fetchone()
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.applications
+        WHERE account_id = %s AND application_id = %s
+        LIMIT 1
+        """,
+        (account_id, application_id)
+    )
+    application = cur.fetchone()
+    if not application:
+        raise HTTPException(404, "Application not found")
+
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.addresses
+        WHERE account_id = %s
+        ORDER BY created_at ASC
+        """,
+        (account_id,)
+    )
+    addresses = cur.fetchall()
+
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.account_documents
+        WHERE account_id = %s
+        ORDER BY uploaded_at DESC
+        """,
+        (account_id,)
+    )
+    documents = cur.fetchall()
+
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.pledge_details
+        WHERE application_id = %s
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (application_id,)
+    )
+    pledge_details = cur.fetchone()
+
+    return {
+        "customer": customer,
+        "application": application,
+        "addresses": addresses,
+        "documents": documents,
+        "pledge_details": pledge_details
+    }
+
+
+def fetch_application_preview_context(cur, account_id: int, application_id: int):
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.accounts
+        WHERE account_id = %s
+        LIMIT 1
+        """,
+        (account_id,)
+    )
+    customer = cur.fetchone()
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.applications
+        WHERE account_id = %s AND application_id = %s
+        LIMIT 1
+        """,
+        (account_id, application_id)
+    )
+    application = cur.fetchone()
+    if not application:
+        raise HTTPException(404, "Application not found")
+
+    addresses = fetch_account_addresses(cur, account_id)
+
+    cur.execute(
+        """
+        SELECT document_type, file_path, uploaded_at
+        FROM gold_schema.account_documents
+        WHERE account_id = %s
+          AND document_type ILIKE '%%photo%%'
+        ORDER BY uploaded_at DESC
+        """,
+        (account_id,)
+    )
+    documents = cur.fetchall()
+
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.pledge_details
+        WHERE application_id = %s
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (application_id,)
+    )
+    pledge_details = cur.fetchone()
+
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.ornaments
+        WHERE application_id = %s
+        ORDER BY created_at ASC, item_id ASC
+        """,
+        (application_id,)
+    )
+    ornaments = cur.fetchall()
+
+    return {
+        "customer": customer,
+        "application": application,
+        "addresses": addresses,
+        "documents": documents,
+        "pledge_details": pledge_details,
+        "ornaments": ornaments
+    }
+
+
+def fetch_pledge_details_for_applications(cur, application_ids):
+    if not application_ids:
+        return []
+
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.pledge_details
+        WHERE application_id = ANY(%s)
+        ORDER BY application_id, created_at DESC
+        """,
+        (application_ids,)
+    )
+    return cur.fetchall()
 
 
 # -------------------------------------------------
@@ -448,44 +825,37 @@ def add_document(mobile: str, payload: AccountDocumentCreateRequest):
     cur = conn.cursor()
     try:
         account_id = get_account_id(cur, mobile)
-        # add other fields from document type if not OTHER
-
+        
+        # Validate required fields
+        if not payload.document_type or not payload.document_type.strip():
+            raise HTTPException(400, 'document_type is required')
+        
         if payload.document_type.upper() != 'OTHER':
-            if not payload.file_path:
-                raise HTTPException(400, 'file_path is required for non-OTHER documents')
-            if not payload.file_name:
-                raise HTTPException(400, 'file_name is required for non-OTHER documents')
+            if not payload.file_path or not payload.file_path.strip():
+                raise HTTPException(400, f'file_path is required for {payload.document_type} documents')
+            if not payload.file_name or not payload.file_name.strip():
+                raise HTTPException(400, f'file_name is required for {payload.document_type} documents')
 
-        existing_sql = [
-            "SELECT document_id FROM gold_schema.account_documents",
-            "WHERE account_id = %s",
-            "AND document_type = %s"
-        ]
-        params = [account_id, payload.document_type]
-
-        if payload.file_path:
-            existing_sql.append("AND file_path = %s")
-            params.append(payload.file_path)
-
-        if payload.document_number:
-            existing_sql.append("AND COALESCE(document_number, '') = %s")
-            params.append(payload.document_number)
-
-        if not payload.file_path and payload.file_name:
-            existing_sql.append("AND file_name = %s")
-            params.append(payload.file_name)
-
-        cur.execute("\n".join(existing_sql), tuple(params))
+        # Check if a document of this type already exists for the account
+        cur.execute(
+            """
+            SELECT document_id FROM gold_schema.account_documents
+            WHERE account_id = %s AND document_type = %s
+            """,
+            (account_id, payload.document_type)
+        )
         existing = cur.fetchone()
 
         if existing:
+            # Update existing document
             cur.execute(
                 """
                 UPDATE gold_schema.account_documents
                 SET document_number = %s,
                     file_path = %s,
                     file_name = %s,
-                    file_size_mb = %s
+                    file_size_mb = %s,
+                    uploaded_at = CURRENT_TIMESTAMP
                 WHERE document_id = %s
                 """,
                 (
@@ -497,6 +867,7 @@ def add_document(mobile: str, payload: AccountDocumentCreateRequest):
                 )
             )
         else:
+            # Insert new document
             cur.execute(
                 """
                 INSERT INTO gold_schema.account_documents (
@@ -518,6 +889,35 @@ def add_document(mobile: str, payload: AccountDocumentCreateRequest):
 
         conn.commit()
         return {"status": "DOCUMENT_SAVED"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f'Error saving document: {str(e)}')
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.delete("/accounts/documents")
+def delete_document(mobile: str, document_id: int):
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        account_id = get_account_id(cur, mobile)
+        cur.execute(
+            """
+            DELETE FROM gold_schema.account_documents
+            WHERE account_id = %s AND document_id = %s
+            RETURNING document_id
+            """,
+            (account_id, document_id)
+        )
+        deleted = cur.fetchone()
+        if not deleted:
+            raise HTTPException(404, "Document not found")
+        conn.commit()
+        return {"status": "DOCUMENT_DELETED"}
     finally:
         cur.close()
         conn.close()
@@ -635,6 +1035,42 @@ def get_applications_by_user(mobile: str = Query(...)):
                 for r in rows
             ]
         }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.delete("/applications/delete")
+def delete_application(payload: ApplicationDeleteRequest):
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        account_id = get_account_id(cur, payload.mobile)
+        
+        # Check if application exists and belongs to user
+        cur.execute(
+            """
+            SELECT status FROM gold_schema.applications
+            WHERE application_id = %s AND account_id = %s
+            """,
+            (payload.application_id, account_id)
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Application not found")
+        
+        status = row[0]
+        if status != 'DRAFT':
+            raise HTTPException(400, "Only draft applications can be deleted")
+        
+        # Delete the application (cascade will handle related records)
+        cur.execute(
+            "DELETE FROM gold_schema.applications WHERE application_id = %s",
+            (payload.application_id,)
+        )
+        
+        conn.commit()
+        return {"message": "Application deleted successfully"}
     finally:
         cur.close()
         conn.close()
@@ -843,21 +1279,24 @@ def create_pledge_details(payload: PledgeDetailsCreateRequest):
         if not pledger_address:
             raise HTTPException(400, "pledger_address is required")
 
+        if not getattr(payload, 'application_id', None):
+            raise HTTPException(400, "application_id is required for pledge details")
+
         cur.execute(
             """
             SELECT application_id
             FROM gold_schema.applications
             WHERE account_id = %s
-            AND application_type = 'PLEDGE_RELEASE'
-            AND status IN ('DRAFT', 'SUBMITTED', 'APPROVED')
-            ORDER BY created_at DESC
+              AND application_id = %s
+              AND application_type = 'PLEDGE_RELEASE'
+              AND status IN ('DRAFT', 'SUBMITTED', 'APPROVED')
             LIMIT 1
             """,
-            (account_id,)
+            (account_id, payload.application_id)
         )
         row = cur.fetchone()
         if not row:
-            raise HTTPException(409, "No PLEDGE_RELEASE application found")
+            raise HTTPException(409, "No matching PLEDGE_RELEASE application found")
 
         application_id = row[0]
 
@@ -950,11 +1389,11 @@ def create_ornaments(payload: OrnamentCreateRequest):
             SELECT application_id, application_no, status
             FROM gold_schema.applications
             WHERE account_id=%s
-            AND status IN ('DRAFT','SUBMITTED','APPROVED')
-            ORDER BY created_at DESC
+              AND application_id=%s
+              AND status IN ('DRAFT','SUBMITTED','APPROVED')
             LIMIT 1
             """,
-            (account_id,)
+            (account_id, payload.application_id)
         )
         row = cur.fetchone()
         if not row:
@@ -963,6 +1402,39 @@ def create_ornaments(payload: OrnamentCreateRequest):
         application_id, application_no, status = row
 
         for item in payload.ornaments:
+            if getattr(item, 'item_id', None):
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM gold_schema.ornaments
+                    WHERE application_id = %s
+                      AND item_id = %s
+                    LIMIT 1
+                    """,
+                    (application_id, item.item_id)
+                )
+                if cur.fetchone():
+                    cur.execute(
+                        """
+                        UPDATE gold_schema.ornaments
+                        SET item_name = %s,
+                            quantity = %s,
+                            purity_percentage = %s,
+                            approx_weight_gms = %s,
+                            item_photo_url = %s
+                        WHERE item_id = %s
+                        """,
+                        (
+                            item.item_name,
+                            item.quantity,
+                            item.purity_percentage,
+                            item.approx_weight_gms,
+                            item.item_photo_url,
+                            item.item_id
+                        )
+                    )
+                    continue
+
             cur.execute(
                 """
                 SELECT item_id
@@ -1043,6 +1515,110 @@ def create_ornaments(payload: OrnamentCreateRequest):
             "total_weight_gms": round(total_wt, 3),
             "status": status
         }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/applications/ornaments/by-application")
+def get_ornaments_by_application(
+    mobile: str = Query(...),
+    application_id: int = Query(...)
+):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        account_id = get_account_id(cur, mobile)
+        return fetch_ornaments_for_application(cur, account_id, application_id)
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/applications/estimation-preview")
+def get_estimation_preview(
+    mobile: str = Query(...),
+    application_id: int = Query(...)
+):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        account_id = get_account_id(cur, mobile)
+        return fetch_estimation_preview_context(cur, account_id, application_id)
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/applications/application-preview")
+def get_application_preview(
+    mobile: str = Query(...),
+    application_id: int = Query(...)
+):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        account_id = get_account_id(cur, mobile)
+        return fetch_application_preview_context(cur, account_id, application_id)
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.delete("/applications/ornaments/{item_id}")
+def delete_ornament(item_id: int, mobile: str = Query(...)):
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        account_id = get_account_id(cur, mobile)
+
+        cur.execute(
+            """
+            SELECT o.application_id
+            FROM gold_schema.ornaments o
+            JOIN gold_schema.applications a ON o.application_id = a.application_id
+            WHERE o.item_id = %s AND a.account_id = %s
+            LIMIT 1
+            """,
+            (item_id, account_id)
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Ornament not found")
+
+        application_id = row[0]
+
+        cur.execute(
+            "SELECT status FROM gold_schema.applications WHERE application_id = %s",
+            (application_id,)
+        )
+        app_row = cur.fetchone()
+        if not app_row or app_row[0] != 'DRAFT':
+            raise HTTPException(400, "Only ornaments in DRAFT applications can be deleted")
+
+        cur.execute("DELETE FROM gold_schema.ornaments WHERE item_id = %s", (item_id,))
+
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(quantity), 0), COALESCE(SUM(approx_weight_gms), 0)
+            FROM gold_schema.ornaments
+            WHERE application_id = %s
+            """,
+            (application_id,)
+        )
+        total_qty, total_wt = cur.fetchone()
+
+        cur.execute(
+            """
+            UPDATE gold_schema.applications
+            SET total_quantity=%s, total_weight_gms=%s
+            WHERE application_id=%s
+            """,
+            (total_qty, round(total_wt, 3), application_id)
+        )
+
+        conn.commit()
+        return {"status": "deleted", "item_id": item_id}
     finally:
         cur.close()
         conn.close()
@@ -1431,39 +2007,6 @@ def add_invoice_item(payload: PaymentInvoiceItemCreateRequest):
         cur.close()
         conn.close()
 
-
-# @app.post("/payments/deduction", response_model=PaymentDeductionResponse)
-# def add_deduction(payload: PaymentDeductionCreateRequest):
-#     conn = get_connection()
-#     cur = conn.cursor()
-#     try:
-#         cur.execute("""
-#             INSERT INTO gold_schema.payment_deductions (
-#                 invoice_item_id,
-#                 deduction_type,
-#                 deduction_amount
-#             )
-#             VALUES (%s,%s,%s)
-#             RETURNING deduction_id
-#         """, (
-#             payload.invoice_item_id,
-#             payload.deduction_type,
-#             payload.deduction_amount
-#         ))
-
-#         deduction_id = cur.fetchone()[0]
-#         conn.commit()
-
-#         return {
-#             "deduction_id": deduction_id,
-#             "invoice_item_id": payload.invoice_item_id
-#         }
-
-#     finally:
-#         cur.close()
-#         conn.close()
-
-
 @app.post("/payments/settlement", response_model=PaymentSettlementResponse)
 def add_settlement(payload: PaymentSettlementCreateRequest):
     conn = get_connection()
@@ -1537,192 +2080,6 @@ def add_settlement(payload: PaymentSettlementCreateRequest):
             "settlement_id": settlement_id,
             "payment_invoice_id": invoice_id,
             "paid_amount": payload.paid_amount
-        }
-
-    finally:
-        cur.close()
-        conn.close()
-
-
-
-@app.get("/applications/final-preview")
-def get_final_application_preview(mobile: str = Query(...)):
-    conn = get_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-
-    try:
-        # --------------------------------------------------
-        # ACCOUNT (USING MOBILE)
-        # --------------------------------------------------
-        cur.execute("""
-            SELECT *
-            FROM gold_schema.accounts
-            WHERE mobile = %s
-        """, (mobile,))
-        account = cur.fetchone()
-
-        if not account:
-            raise HTTPException(404, "Account not found")
-
-        account_id = account["account_id"]
-
-        # --------------------------------------------------
-        # LATEST ACTIVE APPLICATION
-        # --------------------------------------------------
-        cur.execute("""
-            SELECT *
-            FROM gold_schema.applications
-            WHERE account_id = %s
-              AND status IN ('SUBMITTED', 'APPROVED', 'DRAFT')
-            ORDER BY created_at DESC
-            LIMIT 1
-        """, (account_id,))
-        application = cur.fetchone()
-
-        if not application:
-            raise HTTPException(409, "No active application found")
-
-        application_id = application["application_id"]
-
-        # # --------------------------------------------------
-        # # ADDRESSES
-        # # --------------------------------------------------
-        # cur.execute("""
-        #     SELECT address_type, address_line, street,
-        #            city, state, country, pincode
-        #     FROM gold_schema.addresses
-        #     WHERE account_id = %s
-        # """, (account_id,))
-        # addresses = cur.fetchall()
-
-        # # --------------------------------------------------
-        # # PRIMARY BANK ACCOUNT
-        # # --------------------------------------------------
-        # cur.execute("""
-        #     SELECT bank_name, branch, account_number,
-        #            ifsc_code, account_holder_name
-        #     FROM gold_schema.bank_accounts
-        #     WHERE account_id = %s
-        #       AND is_primary = TRUE
-        #     LIMIT 1
-        # """, (account_id,))
-        # bank_account = cur.fetchone()
-
-        # --------------------------------------------------
-        # ORNAMENTS
-        # --------------------------------------------------
-        cur.execute("""
-            SELECT item_name,
-                   quantity,
-                   purity_percentage,
-                   approx_weight_gms,
-                   item_photo_url
-            FROM gold_schema.ornaments
-            WHERE application_id = %s
-        """, (application_id,))
-        ornaments = cur.fetchall()
-
-        # --------------------------------------------------
-        # ESTIMATION + ITEMS
-        # --------------------------------------------------
-        cur.execute("""
-            SELECT e.estimation_id,
-                   e.estimation_no,
-                   e.estimation_date,
-                   e.total_net_amount
-            FROM gold_schema.estimation_application_map m
-            JOIN gold_schema.estimations e
-              ON e.estimation_id = m.estimation_id
-            WHERE m.application_id = %s
-        """, (application_id,))
-        estimation = cur.fetchone()
-
-        estimation_items = []
-        if estimation:
-            cur.execute("""
-                SELECT item_name,
-                       quantity,
-                       gross_weight_gms,
-                       stone_weight_gms,
-                       net_weight_gms,
-                       gold_rate_per_gm,
-                       purity_percentage,
-                       gross_amount,
-                       deduction_percentage,
-                       net_amount
-                FROM gold_schema.estimation_items
-                WHERE estimation_id = %s
-            """, (estimation["estimation_id"],))
-            estimation_items = cur.fetchall()
-
-        # --------------------------------------------------
-        # PLEDGE DETAILS (ONLY FOR PLEDGE RELEASE)
-        # --------------------------------------------------
-        cur.execute("""
-            SELECT pledger_name,
-                   pledger_address,
-                   financier_name,
-                   branch_name,
-                   gold_loan_account_no,
-                   principal_amount,
-                   interest_amount,
-                   total_due,
-                   cheque_no,
-                   cheque_date,
-                   margin_percentage
-            FROM gold_schema.pledge_details
-            WHERE application_id = %s
-        """, (application_id,))
-        pledge_details = cur.fetchone()
-
-        # # --------------------------------------------------
-        # # DOCUMENTS
-        # # --------------------------------------------------
-        # cur.execute("""
-        #     SELECT document_type,
-        #            document_number,
-        #            file_name,
-        #            file_path
-        #     FROM gold_schema.account_documents
-        #     WHERE account_id = %s
-        # """, (account_id,))
-        # documents = cur.fetchall()
-
-        # --------------------------------------------------
-        # FINAL RESPONSE
-        # --------------------------------------------------
-        return {
-            # "account": {
-            #     "account_id": account_id,
-            #     "account_code": account["account_code"],
-            #     "name": f"{account['first_name']} {account['last_name']}",
-            #     "mobile": account["mobile"],
-            #     "email": account["email"],
-            #     "dob": account["date_of_birth"],
-            #     "gender": account["gender"],
-            #     "pan_no": account["pan_no"],
-            #     "aadhar_no": account["aadhar_no"],
-            #     "occupation": account["occupation"]
-            # },
-            #"addresses": addresses,
-            #"bank_account": bank_account,
-            "application": {
-                "application_id": application_id,
-                "application_no": application["application_no"],
-                "application_type": application["application_type"],
-                "application_date": application["application_date"],
-                "branch": application["place"],
-                "status": application["status"],
-                "total_quantity": application["total_quantity"],
-                "total_weight_gms": float(application["total_weight_gms"] or 0)
-            },
-            "ornaments": ornaments,
-            "estimation": {
-                "summary": estimation,
-                "items": estimation_items
-            },
-            "pledge_details": pledge_details,
-            #"documents": documents
         }
 
     finally:
@@ -1846,117 +2203,144 @@ def search_customer(mobile: str = Query(...)):
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     try:
-        cur.execute("SELECT * FROM gold_schema.accounts WHERE mobile=%s", (mobile,))
-        customer = cur.fetchone()
-        if not customer:
-            raise HTTPException(404, "Customer not found")
-
-        account_id = customer['account_id']
-
-        # Fetch all applications
-        cur.execute("SELECT * FROM gold_schema.applications WHERE account_id=%s ORDER BY created_at DESC", (account_id,))
-        applications = cur.fetchall()
-
-        # Fetch all estimations with items
-        cur.execute("""
-            SELECT e.*, m.application_id
-            FROM gold_schema.estimations e
-            JOIN gold_schema.estimation_application_map m ON e.estimation_id=m.estimation_id
-            WHERE e.account_id=%s ORDER BY e.estimation_date DESC
-        """, (account_id,))
-        estimations = cur.fetchall()
-        
-
-        #customer - search 
-
-        # Fetch all estimation items in one query
-        estimation_ids = [est['estimation_id'] for est in estimations]
-        if estimation_ids:
-            cur.execute("SELECT * FROM gold_schema.estimation_items WHERE estimation_id = ANY(%s)", (estimation_ids,))
-            all_estimation_items = cur.fetchall()
-            # Group by estimation_id
-            items_by_est = {}
-            for item in all_estimation_items:
-                eid = item['estimation_id']
-                if eid not in items_by_est:
-                    items_by_est[eid] = []
-                items_by_est[eid].append(item)
-            for est in estimations:
-                est['items'] = items_by_est.get(est['estimation_id'], [])
-        else:
-            for est in estimations:
-                est['items'] = []
-
-        # Fetch all invoices with items and settlements
-        cur.execute("SELECT * FROM gold_schema.payment_invoices WHERE account_id=%s ORDER BY created_at DESC", (account_id,))
-        invoices = cur.fetchall()
-
-        # Fetch all invoice items and settlements in one query each
-        invoice_ids = [inv['payment_invoice_id'] for inv in invoices]
-        if invoice_ids:
-            cur.execute("SELECT * FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", (invoice_ids,))
-            all_invoice_items = cur.fetchall()
-            items_by_inv = {}
-            for item in all_invoice_items:
-                iid = item['payment_invoice_id']
-                if iid not in items_by_inv:
-                    items_by_inv[iid] = []
-                items_by_inv[iid].append(item)
-
-            cur.execute("SELECT * FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s) ORDER BY payment_date DESC", (invoice_ids,))
-            all_settlements = cur.fetchall()
-            settlements_by_inv = {}
-            for sett in all_settlements:
-                iid = sett['payment_invoice_id']
-                if iid not in settlements_by_inv:
-                    settlements_by_inv[iid] = []
-                settlements_by_inv[iid].append(sett)
-
-            for inv in invoices:
-                inv['items'] = items_by_inv.get(inv['payment_invoice_id'], [])
-                inv['settlements'] = settlements_by_inv.get(inv['payment_invoice_id'], [])
-        else:
-            for inv in invoices:
-                inv['items'] = []
-                inv['settlements'] = []
-
-        # Fetch all addresses
-        cur.execute("SELECT * FROM gold_schema.addresses WHERE account_id=%s", (account_id,))
-        addresses = cur.fetchall()
-
-        # Fetch all bank accounts
-        cur.execute("SELECT * FROM gold_schema.bank_accounts WHERE account_id=%s", (account_id,))
-        bank_accounts = cur.fetchall()
-
-        # Fetch all documents
-        cur.execute("SELECT * FROM gold_schema.account_documents WHERE account_id=%s", (account_id,))
-        documents = cur.fetchall()
-
-        # Fetch all ornaments for the customer's applications
-        application_ids = [app['application_id'] for app in applications]
-        ornaments = []
-        pledge_details = []
-        if application_ids:
-            cur.execute("SELECT * FROM gold_schema.ornaments WHERE application_id = ANY(%s)", (application_ids,))
-            ornaments = cur.fetchall()
-
-            cur.execute("SELECT * FROM gold_schema.pledge_details WHERE application_id = ANY(%s)", (application_ids,))
-            pledge_details = cur.fetchall()
+        customer = fetch_customer_by_mobile(cur, mobile)
+        account_id = customer["account_id"]
+        applications = fetch_applications_for_account(cur, account_id)
+        application_ids = [app["application_id"] for app in applications]
 
         return {
             "customer": customer,
             "applications": applications,
-            "estimations": estimations,
-            "invoices": invoices,
-            "addresses": addresses,
-            "bank_accounts": bank_accounts,
-            "documents": documents,
-            "ornaments": ornaments,
-            "pledge_details": pledge_details
+            "estimations": fetch_estimations_for_account(cur, account_id),
+            "invoices": fetch_invoices_for_account(cur, account_id),
+            "addresses": fetch_account_addresses(cur, account_id),
+            "bank_accounts": fetch_bank_accounts(cur, account_id),
+            "documents": fetch_account_documents(cur, account_id),
+            "ornaments": fetch_ornaments_for_applications(cur, application_ids),
+            "pledge_details": fetch_pledge_details_for_applications(cur, application_ids)
         }
     finally:
         cur.close()
         conn.close()
+
+
+@app.get("/customers/summary")
+def get_customer_summary(
+    mobile: str = Query(...),
+    include: str = Query("customer", description="Comma-separated list of data to include: customer,applications,estimations,invoices,addresses,bank_accounts,documents,ornaments,pledge_details")
+):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        customer = fetch_customer_by_mobile(cur, mobile)
+        account_id = customer["account_id"]
+        result = {"customer": customer}
+
+        include_list = [item.strip() for item in include.split(',') if item.strip()]
+        include_set = set(include_list)
+        application_ids = None
+
+        if "applications" in include_set:
+            applications = fetch_applications_for_account(cur, account_id)
+            result["applications"] = applications
+            application_ids = [app["application_id"] for app in applications]
+
+        if "estimations" in include_set:
+            result["estimations"] = fetch_estimations_for_account(cur, account_id)
+
+        if "invoices" in include_set:
+            result["invoices"] = fetch_invoices_for_account(cur, account_id)
+
+        if "addresses" in include_set:
+            result["addresses"] = fetch_account_addresses(cur, account_id)
+
+        if "bank_accounts" in include_set:
+            result["bank_accounts"] = fetch_bank_accounts(cur, account_id)
+
+        if "documents" in include_set:
+            result["documents"] = fetch_account_documents(cur, account_id)
+
+        if "ornaments" in include_set or "pledge_details" in include_set:
+            if application_ids is None:
+                application_ids = fetch_application_ids(cur, account_id)
+
+            if "ornaments" in include_set:
+                result["ornaments"] = fetch_ornaments_for_applications(cur, application_ids)
+
+            if "pledge_details" in include_set:
+                result["pledge_details"] = fetch_pledge_details_for_applications(cur, application_ids)
+
+        return result
+    finally:
+        cur.close()
+        conn.close()
+
+
+# @app.get("/transactions/all")
+# def get_transactions(
+#     mobile: str = Query(None),
+#     start_date: date = Query(None),
+#     end_date: date = Query(None),
+#     days: int = Query(None)
+# ):
+#     conn = get_connection()
+#     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+#     try:
+#         account_condition = ""
+#         params = []
+
+#         if mobile:
+#             account_id = get_account_id(cur, mobile)
+#             account_condition = "AND account_id = %s"
+#             params.append(account_id)
+
+#         if days is not None:
+#             end_date = date.today()
+#             start_date = date.today() - timedelta(days=days)
+
+#         if start_date is not None and end_date is not None:
+#             account_condition += " AND invoice_date BETWEEN %s AND %s"
+#             params.extend([start_date, end_date])
+
+#         invoices_sql = f"SELECT * FROM gold_schema.payment_invoices WHERE 1=1 {account_condition} ORDER BY invoice_date DESC"
+#         cur.execute(invoices_sql, tuple(params))
+#         invoices = cur.fetchall()
+
+#         invoice_ids = [r['payment_invoice_id'] for r in invoices]
+
+#         item_params = []
+#         settlements_params = []
+#         cond_items = ""
+#         cond_settlements = ""
+
+#         if invoice_ids:
+#             cond_items = "WHERE payment_invoice_id = ANY(%s)"
+#             item_params = [invoice_ids]
+#             cond_settlements = "WHERE payment_invoice_id = ANY(%s)"
+#             settlements_params = [invoice_ids]
+
+#         cur.execute(f"SELECT * FROM gold_schema.payment_invoice_items {cond_items}", tuple(item_params))
+#         items = cur.fetchall()
+
+#         cur.execute(f"SELECT * FROM gold_schema.payment_settlements {cond_settlements} ORDER BY payment_date DESC", tuple(settlements_params))
+#         settlements = cur.fetchall()
+
+#         total_invoice_amount = sum(float(r.get('total_net_amount') or 0) for r in invoices)
+#         total_settled_amount = sum(float(r.get('paid_amount') or 0) for r in settlements)
+
+#         return {
+#             "invoices": invoices,
+#             "invoice_items": items,
+#             "settlements": settlements,
+#             "summary": {
+#                 "total_invoices": len(invoices),
+#                 "total_invoice_amount": total_invoice_amount,
+#                 "total_settled_amount": total_settled_amount
+#             }
+#         }
+#     finally:
+#         cur.close()
+#         conn.close()
 
 @app.get("/transactions/all")
 def get_transactions(
@@ -1965,15 +2349,20 @@ def get_transactions(
     end_date: date = Query(None),
     days: int = Query(None)
 ):
+    """
+    Enhanced transactions endpoint with customer details
+    Fixed version - no SQL ambiguous column references
+    """
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     try:
-        account_condition = ""
+        # Build WHERE conditions and parameters
+        where_conditions = ["1=1"]
         params = []
 
         if mobile:
             account_id = get_account_id(cur, mobile)
-            account_condition = "AND account_id = %s"
+            where_conditions.append("pi.account_id = %s")
             params.append(account_id)
 
         if days is not None:
@@ -1981,32 +2370,109 @@ def get_transactions(
             start_date = date.today() - timedelta(days=days)
 
         if start_date is not None and end_date is not None:
-            account_condition += " AND invoice_date BETWEEN %s AND %s"
+            where_conditions.append("pi.invoice_date BETWEEN %s AND %s")
             params.extend([start_date, end_date])
 
-        invoices_sql = f"SELECT * FROM gold_schema.payment_invoices WHERE 1=1 {account_condition} ORDER BY invoice_date DESC"
-        cur.execute(invoices_sql, tuple(params))
+        where_clause = " AND ".join(where_conditions)
+
+        # Enhanced invoices query - FIXED with proper column aliases
+        invoices_query = f"""
+            SELECT 
+                pi.payment_invoice_id,
+                pi.account_id as invoice_account_id,
+                pi.application_id,
+                pi.estimation_id,
+                pi.invoice_no,
+                pi.invoice_date,
+                pi.total_net_amount,
+                pi.amount_in_words,
+                pi.payment_status,
+                pi.remarks,
+                pi.created_at,
+                a.account_id,
+                a.first_name,
+                a.last_name,
+                a.mobile as customer_mobile,
+                a.phone as customer_phone,
+                a.email as customer_email
+            FROM gold_schema.payment_invoices pi
+            LEFT JOIN gold_schema.accounts a ON pi.account_id = a.account_id
+            WHERE {where_clause}
+            ORDER BY pi.invoice_date DESC
+        """
+        
+        cur.execute(invoices_query, tuple(params))
         invoices = cur.fetchall()
 
+        # Fetch customer details for each invoice
+        for invoice in invoices:
+            if invoice.get('account_id'):
+                customer_details = {
+                    "account_id": invoice.get('account_id'),
+                    "first_name": invoice.get('first_name', 'Unknown'),
+                    "last_name": invoice.get('last_name', 'Unknown'),
+                    "mobile": invoice.get('customer_mobile', 'Unknown'),
+                    "phone": invoice.get('customer_phone'),
+                    "email": invoice.get('customer_email')
+                }
+                invoice['customer_details'] = customer_details
+                invoice['customer_name'] = f"{customer_details.get('first_name', 'Unknown')} {customer_details.get('last_name', 'Unknown')}"
+
+        # Get invoice IDs for related data
         invoice_ids = [r['payment_invoice_id'] for r in invoices]
 
-        item_params = []
-        settlements_params = []
-        cond_items = ""
-        cond_settlements = ""
-
+        # Fetch invoice items
+        items = []
         if invoice_ids:
-            cond_items = "WHERE payment_invoice_id = ANY(%s)"
-            item_params = [invoice_ids]
-            cond_settlements = "WHERE payment_invoice_id = ANY(%s)"
-            settlements_params = [invoice_ids]
+            items_query = """
+                SELECT * FROM gold_schema.payment_invoice_items 
+                WHERE payment_invoice_id = ANY(%s)
+            """
+            cur.execute(items_query, (invoice_ids,))
+            items = cur.fetchall()
 
-        cur.execute(f"SELECT * FROM gold_schema.payment_invoice_items {cond_items}", tuple(item_params))
-        items = cur.fetchall()
+        # Fetch settlements with customer details - FIXED
+        settlements = []
+        if invoice_ids:
+            settlements_query = """
+                SELECT 
+                    ps.settlement_id,
+                    ps.payment_invoice_id,
+                    ps.payment_mode,
+                    ps.paid_amount,
+                    ps.payment_date,
+                    ps.reference_no,
+                    ps.created_at,
+                    a.account_id as settlement_account_id,
+                    a.first_name as settlement_first_name,
+                    a.last_name as settlement_last_name,
+                    a.mobile as settlement_mobile,
+                    a.phone as settlement_phone,
+                    a.email as settlement_email
+                FROM gold_schema.payment_settlements ps
+                LEFT JOIN gold_schema.payment_invoices pi ON ps.payment_invoice_id = pi.payment_invoice_id
+                LEFT JOIN gold_schema.accounts a ON pi.account_id = a.account_id
+                WHERE ps.payment_invoice_id = ANY(%s)
+                ORDER BY ps.payment_date DESC
+            """
+            cur.execute(settlements_query, (invoice_ids,))
+            settlements = cur.fetchall()
 
-        cur.execute(f"SELECT * FROM gold_schema.payment_settlements {cond_settlements} ORDER BY payment_date DESC", tuple(settlements_params))
-        settlements = cur.fetchall()
+            # Add customer details to settlements
+            for settlement in settlements:
+                if settlement.get('settlement_account_id'):
+                    customer_details = {
+                        "account_id": settlement.get('settlement_account_id'),
+                        "first_name": settlement.get('settlement_first_name', 'Unknown'),
+                        "last_name": settlement.get('settlement_last_name', 'Unknown'),
+                        "mobile": settlement.get('settlement_mobile', 'Unknown'),
+                        "phone": settlement.get('settlement_phone'),
+                        "email": settlement.get('settlement_email')
+                    }
+                    settlement['customer_details'] = customer_details
+                    settlement['customer_name'] = f"{customer_details.get('first_name', 'Unknown')} {customer_details.get('last_name', 'Unknown')}"
 
+        # Calculate totals
         total_invoice_amount = sum(float(r.get('total_net_amount') or 0) for r in invoices)
         total_settled_amount = sum(float(r.get('paid_amount') or 0) for r in settlements)
 
@@ -2020,6 +2486,8 @@ def get_transactions(
                 "total_settled_amount": total_settled_amount
             }
         }
+    except Exception as e:
+        raise HTTPException(500, f"Failed to fetch transactions: {str(e)}")
     finally:
         cur.close()
         conn.close()
