@@ -34,7 +34,7 @@ class AccountCreateRequest(BaseModel):
     email: Optional[EmailStr] = None
 
     gender: Optional[str] = None
-    date_of_birth: Optional[date] = None
+    date_of_birth: date
     aadhar_no: Optional[str] = None
 
     occupation: Optional[str] = None
@@ -147,6 +147,11 @@ class ApplicationResponse(BaseModel):
     status: str
 
 
+class ApplicationDeleteRequest(BaseModel):
+    mobile: str
+    application_id: int
+
+
 class ApplicationListItem(BaseModel):
     application_id: int
     application_no: str
@@ -170,6 +175,7 @@ class ApplicationListResponse(BaseModel):
 
 class PledgeDetailsCreateRequest(BaseModel):
     mobile: str
+    application_id: int
 
     financier_name: str
     branch_name: Optional[str] = None
@@ -190,6 +196,7 @@ class PledgeDetailsResponse(BaseModel):
 # -------------------------------------------------
 
 class OrnamentItem(BaseModel):
+    item_id: Optional[int] = None
     item_name: str
     quantity: int
     purity_percentage: Decimal
@@ -199,6 +206,7 @@ class OrnamentItem(BaseModel):
 
 class OrnamentCreateRequest(BaseModel):
     mobile: str
+    application_id: int
     ornaments: List[OrnamentItem]
 
 
@@ -283,6 +291,7 @@ class EstimationResponse(BaseModel):
 
 class PaymentInvoiceCreateRequest(BaseModel):
     mobile: str
+    application_id: Optional[int] = None
     invoice_no: str
     invoice_date: date
     total_net_amount: Decimal
@@ -301,6 +310,7 @@ class PaymentInvoiceResponse(BaseModel):
 
 class PaymentInvoiceItemCreateRequest(BaseModel):
     mobile: str
+    application_id: Optional[int] = None
     item_name: str
 
     weight_before_melting: Decimal
@@ -347,6 +357,7 @@ class PaymentDeductionResponse(BaseModel):
 
 class PaymentSettlementCreateRequest(BaseModel):
     mobile: str
+    application_id: Optional[int] = None
     payment_mode: str  # CASH | UPI | BANK_TRANSFER | CHEQUE
     paid_amount: Decimal
     payment_date: date
