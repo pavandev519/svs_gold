@@ -1,31 +1,31 @@
-# Frontend React + Vite Dockerfile
-FROM node:20-alpine
+FROM node:20-alpine AS builder
 
-# Set working directory
 WORKDIR /app
 
 # Copy package files
 COPY svsgold-frontend/package.json ./
-
-# Install dependencies
 RUN npm install
 RUN npm install xlsx
 
 # Copy source code
 COPY svsgold-frontend/ .
 
-# Build the React application
+# Build React (Vite)
 RUN npm run build
 
-# Install nginx
-RUN apk add --no-cache nginx
 
-# Create custom nginx configuration
-RUN mkdir -p /etc/nginx/http.d
-COPY nginx.conf /etc/nginx/http.d/default.conf
+# ----------- PRODUCTION STAGE -----------
+FROM nginx:alpine
 
-# Copy built files to nginx html directory
-RUN mkdir -p /usr/share/nginx/html && cp -r dist/* /usr/share/nginx/html/
+# Remove default nginx config
+RUN rm -rf /etc/nginx/conf.d/default.conf
+
+# Copy custom nginx config
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# Copy built app to /crm path
+RUN mkdir -p /usr/share/nginx/html/crm
+COPY --from=builder /app/dist /usr/share/nginx/html/crm
 
 # Expose port
 EXPOSE 80
