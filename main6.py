@@ -77,7 +77,6 @@ def fetch_customer_by_mobile(cur, mobile: str):
         raise HTTPException(404, "Customer not found")
     return customer
 
-
 def fetch_applications_for_account(cur, account_id: int):
     cur.execute(
         """
