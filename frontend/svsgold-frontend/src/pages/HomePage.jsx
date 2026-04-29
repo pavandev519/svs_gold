@@ -11,7 +11,7 @@ export default function HomePage({ onNavigate }) {
 
       {/* Home Content */}
       <div className="relative text-center max-w-2xl">
-        <img src="/svslogo.png" alt="SVS Gold" className="h-32 mx-auto mb-6 drop-shadow-lg" />
+        <img src={import.meta.env.BASE_URL + 'svslogo.png'} alt="SVS Gold" className="h-32 mx-auto mb-6 drop-shadow-lg" />
         <h1 className="text-6xl font-bold text-gray-900 mb-4">Gold CRM</h1>
         <p className="text-2xl text-gray-600 mb-8">Professional Account Management System</p>
         <p className="text-lg text-gray-600 mb-12">

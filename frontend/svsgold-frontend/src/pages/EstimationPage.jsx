@@ -5,6 +5,7 @@ import {
   FileText, CreditCard, Calculator, LogOut, Menu, X, Home
 } from 'lucide-react'
 import { applicationsAPI, accountsAPI } from '../api/api'
+import { formatDate } from '../utils/validation'
 import PdfGenerator from '../utils/PdfGenerator'
 
 export default function EstimationPage() {
@@ -27,6 +28,7 @@ export default function EstimationPage() {
   const [pdfUrl, setPdfUrl] = useState(null)
   const [pdfLoaded, setPdfLoaded] = useState(false)
   const [generatingPdf, setGeneratingPdf] = useState(false)
+  const [previewLoading, setPreviewLoading] = useState(false)
 
   const storedLogin = JSON.parse(localStorage.getItem('svs_gold_login_data') || '{}')
   const loggedInMobile = localStorage.getItem('user_mobile') || storedLogin?.mobile || ''
@@ -117,6 +119,17 @@ export default function EstimationPage() {
     : allPledges || {}
   const totalDue = parseFloat(appPledge.total_due) || 0
   const finalAmount = isPledgeRelease ? Math.round((grandTotal - totalDue) * 100) / 100 : grandTotal
+  const previewReady = !!(
+    previewData &&
+    (
+      previewData?.account?.name ||
+      previewData?.account?.first_name ||
+      previewData?.account?.email ||
+      previewData?.account?.mobile ||
+      previewData?.pledge_details?.pledger_name
+    ) &&
+    Array.isArray(previewData?.addresses)
+  )
 
   /* ---- Validate ---- */
   const validate = () => {
@@ -148,25 +161,25 @@ export default function EstimationPage() {
         })
       }
 
-      setSaved(true); setGeneratingPdf(true)
+      setSaved(true); setGeneratingPdf(true); setPreviewLoading(true); setPreviewData(null)
 
-      // Get all data from searchCustomer
+      // Get lightweight preview context for the estimation copy.
       let preview = {}
       try {
-        const res = await accountsAPI.searchCustomer(loggedInMobile)
-        const d = res.data || {}
         const appId = application?.application?.application_id
-        const allPledges = d.pledge_details || []
-        const appPledge = appId ? allPledges.find(p => p.application_id === appId) : allPledges[0]
+        const res = await applicationsAPI.getEstimationPreview(loggedInMobile, appId)
+        const d = res.data || {}
 
         preview = {
           account: d.customer || {},
           addresses: d.addresses || [],
           documents: d.documents || [],
-          pledge_details: appPledge || null,
-          application: application?.application || {}
+          pledge_details: d.pledge_details || null,
+          application: d.application || application?.application || {}
         }
-      } catch {}
+      } catch {
+        setError('Estimation saved, but preview details are still loading. Please wait or retry.')
+      }
       setPreviewData(preview)
 
       const custName = preview?.account?.name || [preview?.account?.first_name, preview?.account?.last_name].filter(Boolean).join(' ') || preview?.pledge_details?.pledger_name || ''
@@ -182,10 +195,11 @@ export default function EstimationPage() {
       setPdfUrl(URL.createObjectURL(new Blob([pdfBytes], { type: 'application/pdf' })))
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to save estimation.')
-    } finally { setLoading(false); setGeneratingPdf(false) }
+    } finally { setLoading(false); setGeneratingPdf(false); setPreviewLoading(false) }
   }
 
   const handleProceedToPayment = () => {
+    if (!previewReady) return
     navigate('/payment', { state: { application: previewData, estimation_no: estimationNo, items, grandTotal: finalAmount } })
   }
 
@@ -220,7 +234,7 @@ export default function EstimationPage() {
           <div className="p-4 flex items-center justify-between" style={{ borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
             <div className={`flex items-center gap-3 ${!sidebarOpen && 'justify-center w-full'}`}>
               <div className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden" style={{ background: 'rgba(255,255,255,0.15)' }}>
-                <img src="/svslogo-white.png" alt="SVS Gold" className="w-8 h-8 object-contain" />
+                <img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS Gold" className="w-8 h-8 object-contain" />
               </div>
               {sidebarOpen && <span className="font-bold text-lg">SVS Gold</span>}
             </div>
@@ -422,9 +436,12 @@ export default function EstimationPage() {
             {saved && (() => {
               const acc = previewData?.account || {}
               const addrs = previewData?.addresses || []
+              const docs = previewData?.documents || []
               const custName = acc.name || [acc.first_name, acc.last_name].filter(Boolean).join(' ') || ''
               const presentA = addrs.find(a => /present|current/i.test(a.address_type)) || addrs[0] || {}
               const permA = addrs.find(a => /permanent/i.test(a.address_type)) || addrs[1] || presentA
+              const photoDoc = docs.find(d => /photo/i.test(d.document_type || ''))
+              const photoUrl = acc.photo_url || photoDoc?.file_path || ''
               const fmtA = (a) => [a?.address_line, a?.street, a?.city, a?.state, a?.pincode].filter(Boolean).join(', ')
 
               const numToWords = (n) => {
@@ -456,6 +473,14 @@ export default function EstimationPage() {
                   </div>
                 </div>
 
+                {previewLoading && (
+                  <div className="bg-white rounded-2xl shadow-lg p-8 text-center border border-amber-100">
+                    <Loader size={30} className="animate-spin mx-auto text-amber-600" />
+                    <p className="text-sm font-medium text-gray-700 mt-4">Preparing estimation preview details...</p>
+                    <p className="text-xs text-gray-500 mt-1">Please wait until all customer and application details are loaded.</p>
+                  </div>
+                )}
+
                 {/* ======== ESTIMATION PDF REPLICA ======== */}
                 <div id="estimation-print-area" style={{ fontFamily: "'Times New Roman',Georgia,serif", maxWidth: '750px', margin: '0 auto', background: '#fff', border: '1px solid #ddd', borderRadius: '4px', overflow: 'hidden' }}>
 
@@ -471,7 +496,7 @@ export default function EstimationPage() {
                       <div style={{ fontSize: '20px', fontWeight: 'bold', letterSpacing: '2px' }}>ESTIMATION COPY</div>
                     </div>
                     <div style={{ width: '100px', height: '70px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <img src="/svslogo-white.png" alt="SVS Gold" style={{ maxHeight: '65px', maxWidth: '95px', objectFit: 'contain' }} />
+                      <img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS Gold" style={{ maxHeight: '65px', maxWidth: '95px', objectFit: 'contain' }} />
                     </div>
                   </div>
 
@@ -483,7 +508,14 @@ export default function EstimationPage() {
                           <td style={lb} width="130">Estimation No.</td>
                           <td style={vl}>{estimationNo}</td>
                           <td style={lb} width="60">Date</td>
-                          <td style={vl} width="120">{new Date().toLocaleDateString('en-IN')}</td>
+                          <td style={vl} width="120">{formatDate(new Date())}</td>
+                          <td style={{ border: cb, padding: '4px', textAlign: 'center', verticalAlign: 'top', width: '90px' }} rowSpan={5}>
+                            {photoUrl ? (
+                              <img src={photoUrl} alt="Customer" style={{ width: '80px', height: '95px', objectFit: 'cover', borderRadius: '2px' }} />
+                            ) : (
+                              <div style={{ width: '80px', height: '95px', background: '#f0f6fb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', color: '#999', border: '1px dashed #bbb', margin: '0 auto' }}>Photo</div>
+                            )}
+                          </td>
                         </tr>
                         <tr>
                           <td style={lb}>Name</td>
@@ -590,7 +622,7 @@ export default function EstimationPage() {
                     {/* Date / Place / Signature */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: '20px' }}>
                       <table style={{ fontSize: '11px', borderCollapse: 'collapse' }}><tbody>
-                        <tr><td style={lb}>Date</td><td style={{ ...vl, minWidth: '150px' }}>{new Date().toLocaleDateString('en-IN')}</td></tr>
+                        <tr><td style={lb}>Date</td><td style={{ ...vl, minWidth: '150px' }}>{formatDate(new Date())}</td></tr>
                         <tr><td style={lb}>Place</td><td style={vl}>{application?.application?.place || ''}</td></tr>
                       </tbody></table>
                       <div style={{ textAlign: 'center' }}>
@@ -615,8 +647,13 @@ export default function EstimationPage() {
                   >
                     <Download size={16} /> Print / Download
                   </button>
-                  <button onClick={handleProceedToPayment} className="px-8 py-2.5 flex items-center gap-2 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-semibold rounded-xl shadow-lg text-sm">
-                    <CreditCard size={16} /> Proceed to Payment
+                  <button
+                    onClick={handleProceedToPayment}
+                    disabled={!previewReady || previewLoading}
+                    className="px-8 py-2.5 flex items-center gap-2 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-semibold rounded-xl shadow-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {previewLoading ? <Loader size={16} className="animate-spin" /> : <CreditCard size={16} />}
+                    {previewLoading ? 'Loading Preview...' : 'Proceed to Payment'}
                   </button>
                 </div>
               </div>

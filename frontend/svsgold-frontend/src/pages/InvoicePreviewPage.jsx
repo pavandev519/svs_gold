@@ -23,11 +23,11 @@ export default function InvoicePreviewPage() {
   const [previewData, setPreviewData] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  /* ---- Fetch customer details from search API ---- */
+  /* ---- Fetch customer details from summary API ---- */
   useEffect(() => {
     const fetchPreview = async () => {
       try {
-        const res = await accountsAPI.searchCustomer(mobile)
+        const res = await accountsAPI.searchCustomerSummary(mobile, "customer,addresses,pledge_details")
         const d = res.data || {}
         setPreviewData({
           account: d.customer || {},

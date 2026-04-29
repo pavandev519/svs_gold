@@ -5,6 +5,7 @@ import {
   FileText, CreditCard, Receipt, Banknote, Eye, LogOut, Menu, X, Home, Calculator, Download
 } from 'lucide-react'
 import { paymentsAPI, accountsAPI, applicationsAPI } from '../api/api'
+import { formatDate } from '../utils/validation'
 
 export default function PaymentPage() {
   const location = useLocation()
@@ -75,7 +76,7 @@ export default function PaymentPage() {
     const detectProgress = async () => {
       setCheckingProgress(true)
       try {
-        const res = await accountsAPI.searchCustomer(loggedInMobile)
+        const res = await accountsAPI.searchCustomerSummary(loggedInMobile, "invoices")
         const d = res.data || {}
 
         // Get application_id from navigation state
@@ -139,27 +140,45 @@ export default function PaymentPage() {
   }
 
   const recalcItem = (item) => {
+    const wtBefore = parseFloat(item.weight_before_melting) || 0
     const wtAfter = parseFloat(item.weight_after_melting) || 0
     const purity = parseFloat(item.purity_after_melting) || 0
     const rate = parseFloat(item.gold_rate_per_gm) || 0
+    const effectiveWtAfter = wtBefore > 0 ? Math.min(wtAfter, wtBefore) : wtAfter
     // gross = weight_after_melting * (purity / 100) * gold_rate_per_gm
-    const gross = Math.round((wtAfter * (purity / 100) * rate) * 100) / 100
+    const gross = Math.round((effectiveWtAfter * (purity / 100) * rate) * 100) / 100
     const dedPct = parseFloat(item.deduction_percentage) || 0
     const dedAmount = Math.round((gross * dedPct / 100) * 100) / 100
     const net = Math.round((gross - dedAmount) * 100) / 100
-    return { ...item, gross_amount: parseFloat(gross.toFixed(2)), deductions_amount: dedAmount, net_amount: parseFloat(net.toFixed(2)) }
+    return {
+      ...item,
+      weight_after_melting: item.weight_after_melting,
+      gross_amount: parseFloat(gross.toFixed(2)),
+      deductions_amount: dedAmount,
+      net_amount: parseFloat(net.toFixed(2))
+    }
   }
 
   // Total of all invoice items
   const itemsTotal = invoiceItems.reduce((s, it) => s + (parseFloat(it.net_amount) || 0), 0)
   // Amount payable after pledge deduction
   const payableAmount = Math.round((itemsTotal - pledgeDue) * 100) / 100
+  const hasInvalidInvoiceItems = invoiceItems.some((item) => {
+    const wtBefore = parseFloat(item.weight_before_melting) || 0
+    const wtAfter = parseFloat(item.weight_after_melting) || 0
+    return wtBefore > 0 && wtAfter > wtBefore
+  })
 
   const handleStep1 = async () => {
     // Step 1 is now just Invoice Items — auto-create invoice first
     if (invoiceItems.length === 0) { setError('Add at least one item'); return }
     for (let i = 0; i < invoiceItems.length; i++) {
       if (!invoiceItems[i].item_name?.trim()) { setError(`Item ${i+1}: name required`); return }
+      const wtBefore = parseFloat(invoiceItems[i].weight_before_melting) || 0
+      const wtAfter = parseFloat(invoiceItems[i].weight_after_melting) || 0
+      if (wtBefore <= 0) { setError(`Item ${i+1}: weight before melting must be greater than 0`); return }
+      if (wtAfter <= 0) { setError(`Item ${i+1}: weight after melting must be greater than 0`); return }
+      if (wtAfter > wtBefore) { setError(`Item ${i+1}: weight after melting cannot be greater than weight before melting`); return }
       if (String(invoiceItems[i].purity_after_melting).includes('.')) { setError(`Item ${i+1}: purity must be a whole number (no decimals)`); return }
       if (!parseFloat(invoiceItems[i].deduction_percentage) || parseFloat(invoiceItems[i].deduction_percentage) <= 0) { setError(`Item ${i+1}: deduction percentage must be greater than 0`); return }
     }
@@ -187,7 +206,12 @@ export default function PaymentPage() {
   }
 
   const addInvoiceItem = () => setInvoiceItems(prev => [...prev, { id: Date.now(), mobile: loggedInMobile, item_name: '', weight_before_melting: 0, weight_after_melting: 0, purity_after_melting: 0, gold_rate_per_gm: 0, gross_amount: 0, deduction_percentage: 0, deductions_amount: 0, net_amount: 0, _savedItemId: null }])
-  const updateInvoiceItem = (idx, f, v) => setInvoiceItems(prev => { const u = [...prev]; u[idx] = recalcItem({ ...u[idx], [f]: v }); return u })
+  const updateInvoiceItem = (idx, f, v) => setInvoiceItems(prev => {
+    const u = [...prev]
+    const nextItem = { ...u[idx], [f]: v }
+    u[idx] = recalcItem(nextItem)
+    return u
+  })
   const removeInvoiceItem = (idx) => setInvoiceItems(prev => prev.filter((_, i) => i !== idx))
 
   const handleStep2 = async () => {
@@ -234,7 +258,7 @@ export default function PaymentPage() {
         <div className="h-full flex flex-col">
           <div className="p-4 flex items-center justify-between" style={{ borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
             <div className={`flex items-center gap-3 ${!sidebarOpen && 'justify-center w-full'}`}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden" style={{ background: 'rgba(255,255,255,0.15)' }}><img src="/svslogo-white.png" alt="SVS" className="w-8 h-8 object-contain" /></div>
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden" style={{ background: 'rgba(255,255,255,0.15)' }}><img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS" className="w-8 h-8 object-contain" /></div>
               {sidebarOpen && <span className="font-bold text-lg">SVS Gold</span>}
             </div>
           </div>
@@ -304,7 +328,18 @@ export default function PaymentPage() {
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div><label className={labelClass}>Item Name *</label><input value={item.item_name} onChange={e => updateInvoiceItem(idx, 'item_name', e.target.value)} className={inputClass} /></div>
                         <div><label className={labelClass}>Wt Before Melting (g)</label><input type="text" value={item.weight_before_melting} onChange={e => updateInvoiceItem(idx, 'weight_before_melting', e.target.value.replace(/[^0-9.]/g,''))} className={inputClass} /></div>
-                        <div><label className={labelClass}>Wt After Melting (g)</label><input type="text" value={item.weight_after_melting} onChange={e => updateInvoiceItem(idx, 'weight_after_melting', e.target.value.replace(/[^0-9.]/g,''))} className={inputClass} /></div>
+                        <div>
+                          <label className={labelClass}>Wt After Melting (g)</label>
+                          <input
+                            type="text"
+                            value={item.weight_after_melting}
+                            onChange={e => updateInvoiceItem(idx, 'weight_after_melting', e.target.value.replace(/[^0-9.]/g,''))}
+                            className={`${inputClass} ${(parseFloat(item.weight_after_melting) || 0) > (parseFloat(item.weight_before_melting) || 0) && (parseFloat(item.weight_before_melting) || 0) > 0 ? 'border-red-400 focus:border-red-500 focus:ring-red-500/10' : ''}`}
+                          />
+                          {(parseFloat(item.weight_after_melting) || 0) > (parseFloat(item.weight_before_melting) || 0) && (parseFloat(item.weight_before_melting) || 0) > 0 && (
+                            <p className="mt-1 text-xs text-red-600">Weight after melting cannot be greater than weight before melting.</p>
+                          )}
+                        </div>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                         <div><label className={labelClass}>Purity After (%)</label><input type="text" value={item.purity_after_melting} onChange={e => { const v = e.target.value.replace(/[^0-9]/g,''); if (v === '' || parseInt(v) <= 100) updateInvoiceItem(idx, 'purity_after_melting', v) }} className={inputClass} /></div>
@@ -335,8 +370,13 @@ export default function PaymentPage() {
                   </div>
                 )}
                 <div className="flex justify-center">
-                  <button onClick={handleStep1} disabled={loading} className="px-10 py-3 bg-gradient-to-r from-amber-500 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-semibold rounded-xl shadow-lg disabled:opacity-50 flex items-center gap-2 text-sm">{loading ? <><Loader size={16} className="animate-spin" /> Saving...</> : <>Save Items & Next <ChevronRight size={16} /></>}</button>
+                  <button onClick={handleStep1} disabled={loading || hasInvalidInvoiceItems} className="px-10 py-3 bg-gradient-to-r from-amber-500 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-semibold rounded-xl shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 text-sm">{loading ? <><Loader size={16} className="animate-spin" /> Saving...</> : <>Save Items & Next <ChevronRight size={16} /></>}</button>
                 </div>
+                {hasInvalidInvoiceItems && (
+                  <p className="text-center text-sm text-red-600 font-medium">
+                    Fix highlighted item errors to continue.
+                  </p>
+                )}
               </div>
             )}
 
@@ -367,12 +407,15 @@ export default function PaymentPage() {
             {allComplete && (() => {
               const acc = appData?.account || {}
               const addrs = appData?.addresses || []
+              const docs = appData?.documents || []
               const appInfo = appData?.application || {}
               const custName = acc.name || [acc.first_name, acc.last_name].filter(Boolean).join(' ') || ''
               const presentA = addrs.find(a => /present|current/i.test(a.address_type)) || addrs[0] || {}
               const permA = addrs.find(a => /permanent/i.test(a.address_type)) || addrs[1] || presentA
               const fmtA = (a) => [a?.address_line, a?.street, a?.city, a?.state, a?.pincode].filter(Boolean).join(', ')
               const calcAge = (d) => { if (!d) return ''; const b = new Date(d), t = new Date(); let a = t.getFullYear() - b.getFullYear(); if (t.getMonth() < b.getMonth() || (t.getMonth() === b.getMonth() && t.getDate() < b.getDate())) a--; return a }
+              const photoDoc = docs.find(d => /photo/i.test(d.document_type || ''))
+              const photoUrl = acc.photo_url || photoDoc?.file_path || ''
 
               const totalNet = invoiceItems.reduce((s, it) => s + (parseFloat(it.net_amount) || 0), 0)
               const blue = '#2c5f8a'
@@ -403,7 +446,7 @@ export default function PaymentPage() {
                       <div style={{ fontSize: '20px', fontWeight: 'bold', letterSpacing: '2px' }}>PAYMENT VOUCHER</div>
                     </div>
                     <div style={{ width: '100px', height: '70px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <img src="/svslogo-white.png" alt="SVS Gold" style={{ maxHeight: '65px', maxWidth: '95px', objectFit: 'contain' }} />
+                      <img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS Gold" style={{ maxHeight: '65px', maxWidth: '95px', objectFit: 'contain' }} />
                     </div>
                   </div>
 
@@ -415,7 +458,7 @@ export default function PaymentPage() {
                           <td style={lb} width="120">Bill No.</td>
                           <td style={vl}>{invoice.invoice_no}</td>
                           <td style={lb} width="120">Application Date</td>
-                          <td style={vl}>{appInfo.application_date || invoice.invoice_date}</td>
+                          <td style={vl}>{formatDate(appInfo.application_date) || formatDate(invoice.invoice_date)}</td>
                         </tr>
                         <tr>
                           <td style={lb}>Application No.</td>
@@ -430,6 +473,13 @@ export default function PaymentPage() {
                         <tr>
                           <td style={lb} width="120">Name</td>
                           <td style={vl} colSpan={5}>{custName}</td>
+                          <td style={{ border: cb, padding: '4px', textAlign: 'center', verticalAlign: 'top', width: '90px' }} rowSpan={5}>
+                            {photoUrl ? (
+                              <img src={photoUrl} alt="Customer" style={{ width: '80px', height: '95px', objectFit: 'cover', borderRadius: '2px' }} />
+                            ) : (
+                              <div style={{ width: '80px', height: '95px', background: '#f0f6fb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', color: '#999', border: '1px dashed #bbb', margin: '0 auto' }}>Photo</div>
+                            )}
+                          </td>
                         </tr>
                         <tr>
                           <td style={lb}>Email ID</td>

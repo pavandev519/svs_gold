@@ -9,6 +9,7 @@ COPY svsgold-frontend/package.json ./
 
 # Install dependencies
 RUN npm install
+RUN npm install xlsx
 
 # Copy source code
 COPY svsgold-frontend/ .

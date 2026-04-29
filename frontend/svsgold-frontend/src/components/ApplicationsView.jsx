@@ -3,11 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import {
   Eye, AlertCircle, Loader, Edit, ChevronLeft,
   FileText, Calendar, MapPin, User, Building2,
-  Hash, Clock, FileDown, CreditCard, Calculator
+  Hash, Clock, FileDown, CreditCard, Calculator, Trash2
 } from 'lucide-react'
 import ApplicationForm from './ApplicationForm'
 import ApplicationPreview from './ApplicationPreview'
 import { applicationsAPI, accountsAPI } from '../api/api'
+import { formatDate } from '../utils/validation'
 
 export default function ApplicationsView({
   userIdentifier,
@@ -30,7 +31,7 @@ export default function ApplicationsView({
   const [checkingCompletion, setCheckingCompletion] = useState(true)
 
   /* ================================================================ */
-  /*  FETCH DATA ON MOUNT — searchCustomer only (has everything)      */
+  /*  FETCH DATA ON MOUNT — lightweight summary API                  */
   /* ================================================================ */
   useEffect(() => {
     if (!userIdentifier) return
@@ -39,7 +40,11 @@ export default function ApplicationsView({
       setCheckingCompletion(true)
       let custData = {}
       try {
-        const res = await accountsAPI.searchCustomer(userIdentifier)
+        // Keep this lightweight for the applications list.
+        const res = await accountsAPI.searchCustomerSummary(
+          userIdentifier,
+          "customer,applications,estimations,invoices,pledge_details,ornaments"
+        )
         custData = res.data || {}
       } catch {}
 
@@ -67,10 +72,22 @@ export default function ApplicationsView({
   /* ================================================================ */
   const allPledges = previewData?.pledge_details || []
   const allOrnaments = previewData?.ornaments || []
+  const allEstimations = previewData?.estimations || []
+  const allInvoices = previewData?.invoices || []
 
   // Per-app helpers
   const getAppPledge = (appId) => (Array.isArray(allPledges) ? allPledges : []).find(p => p.application_id === appId)
-  const getAppOrnaments = (appId) => (Array.isArray(allOrnaments) ? allOrnaments : []).filter(o => o.application_id === appId)
+  const getAppOrnaments = (appId, app = null) => {
+    const fetched = (Array.isArray(allOrnaments) ? allOrnaments : []).filter(o => o.application_id === appId)
+    if (fetched.length > 0) return fetched
+    return Array.isArray(app?.ornaments) ? app.ornaments : []
+  }
+  const getAppEstimation = (appId) => (Array.isArray(allEstimations) ? allEstimations : []).find(e => e.application_id === appId) || null
+  const getAppInvoice = (appId) => {
+    const invoices = Array.isArray(allInvoices) ? allInvoices : []
+    return invoices.find(i => i.application_id === appId) || null
+  }
+  const hasSavedOrnamentTotals = (app) => (Number(app?.total_quantity) || 0) > 0 || (Number(app?.total_weight_gms) || 0) > 0
 
   /* ================================================================ */
   /*  TYPE-AWARE COMPLETION CHECK (per application_id)                */
@@ -82,7 +99,7 @@ export default function ApplicationsView({
     }
     const appId = app?.application_id
     const type = app?.application_type || ''
-    const appHasOrn = getAppOrnaments(appId).length > 0
+    const appHasOrn = getAppOrnaments(appId, app).length > 0 || hasSavedOrnamentTotals(app)
     if (type === 'DIRECT_BUYING') return appHasOrn
     const appHasPledge = !!getAppPledge(appId)
     return appHasPledge && appHasOrn
@@ -92,11 +109,12 @@ export default function ApplicationsView({
     const appId = app?.application_id
     const type = app?.application_type || ''
     const missing = []
+    const appHasOrn = getAppOrnaments(appId, app).length > 0 || hasSavedOrnamentTotals(app)
     if (type === 'DIRECT_BUYING') {
-      if (getAppOrnaments(appId).length === 0) missing.push('Ornaments')
+      if (!appHasOrn) missing.push('Ornaments')
     } else {
       if (!getAppPledge(appId)) missing.push('Pledge details')
-      if (getAppOrnaments(appId).length === 0) missing.push('Ornaments')
+      if (!appHasOrn) missing.push('Ornaments')
     }
     return missing
   }
@@ -124,7 +142,7 @@ export default function ApplicationsView({
   }
 
   /* ================================================================ */
-  /*  VIEW APPLICATION DETAILS — fetch from search API by app_id      */
+  /*  VIEW APPLICATION DETAILS — refresh summary for selected app      */
   /* ================================================================ */
   const handleViewApplication = async (app) => {
     setSelectedApplication(app)
@@ -134,46 +152,56 @@ export default function ApplicationsView({
 
     const appId = app.application_id
     let custData = {}
+    let ornamentsData = {}
 
-    try {
-      const res = await accountsAPI.searchCustomer(userIdentifier)
-      custData = res.data || {}
-    } catch {}
+    const [summaryResult, ornamentsResult] = await Promise.allSettled([
+      accountsAPI.searchCustomerSummary(
+        userIdentifier,
+        "customer,addresses,documents,applications,pledge_details,estimations,invoices,ornaments"
+      ),
+      applicationsAPI.getOrnamentsByApplication(userIdentifier, appId)
+    ])
 
-    // Match by application_id
-    const allPledges = custData.pledge_details || []
-    const appPledge = allPledges.find(p => p.application_id === appId) || null
-
-    const allOrnaments = custData.ornaments || []
-    const appOrnaments = allOrnaments.filter(o => o.application_id === appId)
-
-    const allEstimations = custData.estimations || []
-    const appEstimation = allEstimations.find(e => e.application_id === appId) || null
-
-    const allInvoices = custData.invoices || []
-    const appInvoice = allInvoices.find(inv => inv.application_id === appId) || null
-
-    const mergedPreview = {
-      account: custData.customer || {},
-      addresses: custData.addresses || [],
-      documents: custData.documents || [],
-      bank_account: custData.bank_accounts?.[0] || null,
-      invoices: allInvoices,
-      pledge_details: allPledges,
-      ornaments: allOrnaments,
-      estimation: appEstimation,
-      application: app,
-      _appPledge: appPledge,
-      _appOrnaments: appOrnaments,
-      _appEstimation: appEstimation,
-      _appInvoice: appInvoice
+    if (summaryResult.status === 'fulfilled') {
+      custData = summaryResult.value?.data || {}
+    } else {
+      console.error('Failed fetching application summary:', summaryResult.reason)
+      custData = { pledge_details: [], estimations: [], invoices: [], ornaments: [] }
     }
-    setPreviewData(mergedPreview)
+
+    if (ornamentsResult.status === 'fulfilled') {
+      ornamentsData = ornamentsResult.value?.data || {}
+    } else {
+      console.error('Failed fetching application ornaments:', ornamentsResult.reason)
+      ornamentsData = { ornaments: [] }
+    }
+
+    const appPledge = (custData.pledge_details || []).find(p => p.application_id === appId) || null
+    const summaryOrnaments = (custData.ornaments || []).filter(o => o.application_id === appId)
+    const appOrnaments = ornamentsData.ornaments || []
+    const mergedOrnaments =
+      appOrnaments.length > 0
+        ? appOrnaments
+        : summaryOrnaments.length > 0
+          ? summaryOrnaments
+          : (Array.isArray(app?.ornaments) ? app.ornaments : [])
+    const ornamentSummary = ornamentsData.summary || null
+    const hasOrnamentFallback = mergedOrnaments.length === 0 && (ornamentSummary || hasSavedOrnamentTotals(app))
+
+    const appEstimation = (custData.estimations || []).find(e => e.application_id === appId) || null
+    const appInvoice = (custData.invoices || []).find(i => i.application_id === appId) || null
 
     setDetailData({
       application: app,
+      account: custData.customer || {},
+      addresses: custData.addresses || [],
+      documents: custData.documents || [],
       pledge_details: appPledge,
-      ornaments: appOrnaments,
+      ornaments: mergedOrnaments,
+      ornaments_summary: hasOrnamentFallback ? {
+        total_quantity: Number(ornamentSummary?.total_quantity ?? app.total_quantity) || 0,
+        total_weight_gms: Number(ornamentSummary?.total_weight_gms ?? app.total_weight_gms) || 0
+      } : null,
       estimation: appEstimation,
       invoice: appInvoice
     })
@@ -185,12 +213,65 @@ export default function ApplicationsView({
     setViewMode('edit')
   }
 
+  const handleDeleteApplication = async (app) => {
+    if (!window.confirm(`Are you sure you want to delete application ${app.application_no}? This action cannot be undone.`)) {
+      return
+    }
+
+    try {
+      await applicationsAPI.deleteApplication({
+        mobile: userIdentifier,
+        application_id: app.application_id
+      })
+      
+      // Remove from local state
+      const updatedList = applications.filter(a => a.application_id !== app.application_id)
+      onApplicationsUpdate(updatedList)
+    } catch (error) {
+      console.error('Delete failed:', error)
+      alert('Failed to delete application. Please try again.')
+    }
+  }
+
   const handleBackToList = () => {
     setViewMode(null)
     setSelectedApplication(null)
     setDetailData(null)
     setDetailError('')
     setSelectedPdf(null)
+  }
+
+  const handleDeleteOrnament = async (itemId) => {
+    if (!window.confirm('Are you sure you want to delete this ornament?')) {
+      return
+    }
+
+    try {
+      await applicationsAPI.deleteOrnament(itemId, userIdentifier)
+      const updatedOrnaments = detailData.ornaments.filter(o => o.item_id !== itemId)
+      setDetailData(prev => ({
+        ...prev,
+        ornaments: updatedOrnaments
+      }))
+
+      accountsAPI.clearCustomerCache(userIdentifier)
+
+      try {
+        await handleViewApplication(selectedApplication)
+      } catch (refreshError) {
+        console.error('Ornament deleted but refresh failed:', refreshError)
+      }
+    } catch (error) {
+      console.error('Delete ornament failed:', error)
+      alert('Failed to delete ornament. Please try again.')
+    }
+  }
+
+  const handleEditOrnament = (ornament) => {
+    // Set the ornament for editing in the form
+    setSelectedApplication(selectedApplication)
+    setViewMode('edit')
+    // The form will load existing ornaments and allow editing
   }
 
   const handleApplicationCreated = (updatedApplication) => {
@@ -242,11 +323,25 @@ export default function ApplicationsView({
   /*  DETAIL VIEW                                                     */
   /* ================================================================ */
   if (viewMode === 'view' && selectedApplication) {
-    const complete = isAppComplete(selectedApplication)
-    const displayStatus = getDisplayStatus(selectedApplication)
-    const missing = getMissingSteps(selectedApplication)
     const isDirect = selectedApplication.application_type === 'DIRECT_BUYING'
+    const detailHasOrnaments = (detailData?.ornaments?.length > 0) || !!detailData?.ornaments_summary
+    
+    // For detail view, compute completion from actual detailData (not stale previewData)
+    const actualPledge = detailData?.pledge_details?.pledger_name
+    const actualOrnaments = detailHasOrnaments
+    const detailComplete = isDirect ? actualOrnaments : (actualPledge && actualOrnaments)
+    
+    const displayStatus = getDisplayStatus(selectedApplication)
     const isDraft = displayStatus === 'DRAFT'
+    
+    // Calculate missing steps from detailData
+    const actualMissing = []
+    if (isDirect) {
+      if (!actualOrnaments) actualMissing.push('Ornaments')
+    } else {
+      if (!actualPledge) actualMissing.push('Pledge details')
+      if (!actualOrnaments) actualMissing.push('Ornaments')
+    }
 
     return (
       <div className="space-y-6">
@@ -255,14 +350,14 @@ export default function ApplicationsView({
         </button>
 
         {/* Completion Warning — only show for DRAFT apps that are genuinely incomplete */}
-        {!detailLoading && isDraft && !complete && (
+        {!detailLoading && isDraft && !detailComplete && (
           <div className="flex items-start gap-3 p-4 bg-amber-50 border-2 border-amber-200 rounded-xl">
             <AlertCircle className="text-amber-600 flex-shrink-0 mt-0.5" size={20} />
             <div>
               <p className="text-sm text-amber-800 font-medium">Application Incomplete — Status: DRAFT</p>
               <p className="text-xs text-amber-600 mt-1">
-                {missing.length > 0
-                  ? `${missing.join(' and ')} ${missing.length === 1 ? 'is' : 'are'} missing.`
+                {actualMissing.length > 0
+                  ? `${actualMissing.join(' and ')} ${actualMissing.length === 1 ? 'is' : 'are'} missing.`
                   : 'Complete all steps and click "Accept & Continue" to submit.'
                 }
               </p>
@@ -296,7 +391,7 @@ export default function ApplicationsView({
               <div className="p-8">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   <DetailField icon={<FileText size={16} className="text-amber-600" />} label="Type" value={detailData?.application?.application_type?.replace('_', ' ') || '—'} />
-                  <DetailField icon={<Calendar size={16} className="text-amber-600" />} label="Date" value={detailData?.application?.application_date || '—'} />
+                  <DetailField icon={<Calendar size={16} className="text-amber-600" />} label="Date" value={formatDate(detailData?.application?.application_date) || '—'} />
                   <DetailField icon={<MapPin size={16} className="text-amber-600" />} label="Branch" value={detailData?.application?.branch || '—'} />
                   <DetailField icon={<Hash size={16} className="text-amber-600" />} label="Mobile" value={detailData?.application?.mobile || userIdentifier || '—'} />
                   <DetailField icon={<Clock size={16} className="text-amber-600" />} label="Status" value={displayStatus} />
@@ -340,20 +435,66 @@ export default function ApplicationsView({
                   <h3 className="text-lg font-bold text-gray-900">Ornaments ({detailData.ornaments.length})</h3>
                 </div>
                 <div className="p-8">
-                  <div className="hidden md:grid grid-cols-5 gap-4 pb-3 border-b-2 border-gray-100 mb-4">
+                  <div className="hidden md:grid gap-4 pb-3 border-b-2 border-gray-100 mb-4" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr 0.8fr 1.2fr' }}>
+                    {['Item Name', 'Quantity', 'Purity %', 'Weight (gms)', 'Photo', 'Actions'].map(h => (
+                      <span key={h} className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</span>
+                    ))}
+                  </div>
+                  {detailData.ornaments.map((orn, idx) => {
+                    const isDraft = selectedApplication?.status === 'DRAFT'
+                    return (
+                      <div key={idx} className="grid gap-4 py-4 border-b border-gray-50 last:border-0 items-center" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr 0.8fr 1.2fr' }}>
+                        <span className="font-medium text-gray-800">{orn.item_name || '—'}</span>
+                        <span className="text-gray-700">{orn.quantity || 0}</span>
+                        <span className="text-gray-700">{orn.purity_percentage || 0}%</span>
+                        <span className="text-gray-700">{orn.approx_weight_gms || 0} gms</span>
+                        <div>{orn.item_photo_url ? <img src={orn.item_photo_url} alt={orn.item_name} className="w-12 h-12 rounded-lg object-cover border-2 border-amber-200" /> : <span className="text-gray-400 text-sm">No photo</span>}</div>
+                        {isDraft ? (
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleEditOrnament(orn)}
+                              className="flex items-center gap-1 px-3 py-2 bg-blue-50 text-blue-700 font-semibold rounded-lg hover:bg-blue-100 transition-all text-sm"
+                              title="Edit this ornament"
+                            >
+                              <Edit size={14} /> Edit
+                            </button>
+                            <button
+                              onClick={() => handleDeleteOrnament(orn.item_id)}
+                              className="flex items-center gap-1 px-3 py-2 bg-red-50 text-red-700 font-semibold rounded-lg hover:bg-red-100 transition-all text-sm"
+                              title="Delete this ornament"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-gray-400 text-sm">Read-only</span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ) : detailData.ornaments_summary ? (
+              <div className="bg-white rounded-2xl shadow-lg overflow-hidden border border-amber-100">
+                <div className="px-8 py-5" style={{ background: 'linear-gradient(135deg, #fdf8f0, #f0d5a8)' }}>
+                  <h3 className="text-lg font-bold text-gray-900">Ornaments (Saved)</h3>
+                </div>
+                <div className="p-8">
+                  <div className="hidden md:grid gap-4 pb-3 border-b-2 border-gray-100 mb-4" style={{ gridTemplateColumns: '1.4fr 1fr 1fr 1fr 1fr' }}>
                     {['Item Name', 'Quantity', 'Purity %', 'Weight (gms)', 'Photo'].map(h => (
                       <span key={h} className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</span>
                     ))}
                   </div>
-                  {detailData.ornaments.map((orn, idx) => (
-                    <div key={idx} className="grid grid-cols-1 md:grid-cols-5 gap-4 py-4 border-b border-gray-50 last:border-0 items-center">
-                      <span className="font-medium text-gray-800">{orn.item_name || '—'}</span>
-                      <span className="text-gray-700">{orn.quantity || 0}</span>
-                      <span className="text-gray-700">{orn.purity_percentage || 0}%</span>
-                      <span className="text-gray-700">{orn.approx_weight_gms || 0} gms</span>
-                      <div>{orn.item_photo_url ? <img src={orn.item_photo_url} alt={orn.item_name} className="w-12 h-12 rounded-lg object-cover border-2 border-amber-200" /> : <span className="text-gray-400 text-sm">No photo</span>}</div>
-                    </div>
-                  ))}
+                  <div className="grid gap-4 py-4 items-center" style={{ gridTemplateColumns: '1.4fr 1fr 1fr 1fr 1fr' }}>
+                    <span className="font-medium text-gray-800">Saved ornament details</span>
+                    <span className="text-gray-700">{detailData.ornaments_summary.total_quantity || 0}</span>
+                    <span className="text-gray-400">-</span>
+                    <span className="text-gray-700">{detailData.ornaments_summary.total_weight_gms || 0} gms</span>
+                    <span className="text-gray-400 text-sm">Photo unavailable</span>
+                  </div>
+                  <p className="mt-6 text-sm text-amber-700">
+                    Detailed ornament rows are not coming from the current summary response, so this fallback row is built from the saved application totals.
+                  </p>
                 </div>
               </div>
             ) : (
@@ -367,15 +508,15 @@ export default function ApplicationsView({
               {(() => {
                 const appId = selectedApplication?.application_id
                 const hasPledge = !!detailData?.pledge_details?.pledger_name
-                const hasOrn = detailData?.ornaments?.length > 0
+                const hasOrn = detailHasOrnaments
 
                 // Estimation matched by application_id from search API
-                const appEst = previewData?._appEstimation || detailData?.estimation
+                const appEst = detailData?.estimation || getAppEstimation(appId)
                 const hasEst = !!appEst?.estimation_id || (appEst?.items?.length > 0)
                 const estItems = appEst?.items || detailData?.estimation?.items || []
 
                 // Invoice matched by application_id from search API
-                const appInv = previewData?._appInvoice || detailData?.invoice
+                const appInv = detailData?.invoice || getAppInvoice(appId)
                 const hasInvoice = !!appInv?.invoice_no || !!appInv?.invoice_id
                 const hasInvoiceItems = !!appInv?.has_items || !!appInv?.items_count || (appInv?.invoice_items?.length > 0)
                 const hasSettlement = !!appInv?.settlement_id || !!appInv?.payment_mode || !!appInv?.settlement_status
@@ -384,11 +525,13 @@ export default function ApplicationsView({
                 const isSubmitted = ['SUBMITTED','APPROVED','COMPLETED'].includes((selectedApplication?.status || '').toUpperCase())
 
                 const completedPdfs = []
-                if (hasPledge && hasOrn) completedPdfs.push({ label: 'Application Form', mode: 'pdf' })
+                // Show preview for applications with ornaments (helps users see what they're creating/have submitted)
+                if (hasOrn) completedPdfs.push({ label: 'Application Preview', mode: 'pdf' })
                 if (hasEst) completedPdfs.push({ label: 'Estimation', mode: 'estimation-pdf' })
                 if (paymentComplete || isSubmitted) completedPdfs.push({ label: 'Payment Voucher', mode: 'payment-pdf' })
 
                 let nextAction = null
+                const canEditOrnaments = !isSubmitted && selectedApplication?.status === 'DRAFT'
                 if (!isSubmitted) {
                   const isPledgeType = selectedApplication?.application_type === 'PLEDGE_RELEASE'
                   if (isPledgeType && !hasPledge) {
@@ -396,7 +539,7 @@ export default function ApplicationsView({
                   } else if (!hasOrn) {
                     nextAction = { label: 'Continue — Add Ornaments', action: () => handleEditApplication(selectedApplication) }
                   } else if (!hasEst) {
-                    nextAction = { label: 'Continue — Estimation', action: () => navigate('/estimation', { state: { application: previewData } }) }
+                    nextAction = { label: 'Continue — Estimation', action: () => navigate('/estimation', { state: { application: detailData } }) }
                   } else if (!paymentComplete) {
                     let paymentStep = 1
                     if (hasInvoice && !hasInvoiceItems) paymentStep = 2
@@ -446,7 +589,7 @@ export default function ApplicationsView({
             {/* Inline PDF Preview */}
             {selectedPdf === 'pdf' && (
               <div className="mt-6">
-                <ApplicationPreview application={selectedApplication} userIdentifier={userIdentifier} onBack={() => setSelectedPdf(null)} />
+                <ApplicationPreview application={selectedApplication} userIdentifier={userIdentifier} initialData={detailData} onBack={() => setSelectedPdf(null)} />
               </div>
             )}
             {selectedPdf === 'estimation-pdf' && (
@@ -469,7 +612,7 @@ export default function ApplicationsView({
   /*  PDF PREVIEW                                                     */
   /* ================================================================ */
   if (viewMode === 'pdf' && selectedApplication) {
-    return <ApplicationPreview application={selectedApplication} userIdentifier={userIdentifier} onBack={() => { setViewMode('view'); setSelectedPdf(null) }} />
+    return <ApplicationPreview application={selectedApplication} userIdentifier={userIdentifier} initialData={detailData} onBack={() => { setViewMode('view'); setSelectedPdf(null) }} />
   }
 
   /* ================================================================ */
@@ -510,7 +653,7 @@ export default function ApplicationsView({
                     </div>
                     <div className="flex flex-wrap items-center gap-x-5 gap-y-1 mt-2 text-sm text-gray-500">
                       {app.application_type && <span className="flex items-center gap-1.5"><FileText size={14} /> {app.application_type.replace('_', ' ')}</span>}
-                      {app.application_date && <span className="flex items-center gap-1.5"><Calendar size={14} /> {app.application_date}</span>}
+                      {app.application_date && <span className="flex items-center gap-1.5"><Calendar size={14} /> {formatDate(app.application_date)}</span>}
                       {app.place && <span className="flex items-center gap-1.5"><MapPin size={14} /> {app.place}</span>}
                     </div>
                   </div>
@@ -521,6 +664,11 @@ export default function ApplicationsView({
                     <Eye size={16} /> View
                   </button>
                   
+                  {isDraft && (
+                    <button onClick={() => handleDeleteApplication(app)} className="flex items-center gap-2 px-5 py-2.5 bg-red-50 text-red-700 font-semibold rounded-xl hover:bg-red-100 transition-all">
+                      <Trash2 size={16} /> Delete
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -564,7 +712,7 @@ function EstimationPdfView({ userIdentifier, applicationId }) {
   React.useEffect(() => {
     (async () => {
       try {
-        const r = await accountsAPI.searchCustomer(userIdentifier)
+        const r = await accountsAPI.searchCustomerSummary(userIdentifier, "customer,addresses,documents,applications,estimations,pledge_details")
         const d = r.data || {}
         const ests = d.estimations || []
         // Find estimation matching the applicationId, fallback to latest
@@ -592,6 +740,7 @@ function EstimationPdfView({ userIdentifier, applicationId }) {
         setData({
           account: d.customer || {},
           addresses: d.addresses || [],
+          documents: d.documents || [],
           pledge_details: appPledge || null,
           estimation: latest ? { ...latest, items: latest.items || [], summary: { total_net_amount: latest.total_net_amount, estimation_no: latest.estimation_no } } : {},
           application: appObj
@@ -604,12 +753,15 @@ function EstimationPdfView({ userIdentifier, applicationId }) {
 
   const acc = data?.account || {}
   const addrs = data?.addresses || []
+  const docs = data?.documents || []
   const pledge = data?.pledge_details || {}
   const est = data?.estimation || {}
   const items = est.items || []
   const name = [acc.first_name, acc.last_name].filter(Boolean).join(' ')
   const present = addrs.find(a => /present|current/i.test(a.address_type)) || addrs[0] || {}
   const perm = addrs.find(a => /permanent/i.test(a.address_type)) || addrs[1] || present
+  const photoDoc = docs.find(d => /photo/i.test(d.document_type || ''))
+  const photoUrl = acc.photo_url || photoDoc?.file_path || ''
   const fA = (a) => [a?.address_line, a?.street, a?.city, a?.state, a?.pincode].filter(Boolean).join(', ')
 
   const totalNet = est.summary?.total_net_amount || items.reduce((s, it) => s + (parseFloat(it.net_amount) || 0), 0)
@@ -656,13 +808,13 @@ function EstimationPdfView({ userIdentifier, applicationId }) {
             <div style={{ fontSize: '10px', opacity: .85 }}>www.svsgold.com</div>
           </div>
           <div style={{ textAlign: 'center', color: '#fff' }}><div style={{ fontSize: '20px', fontWeight: 'bold', letterSpacing: '2px' }}>ESTIMATION COPY</div></div>
-          <div style={{ width: '100px', height: '70px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><img src="/svslogo-white.png" alt="SVS Gold" style={{ maxHeight: '65px', maxWidth: '95px', objectFit: 'contain' }} /></div>
+          <div style={{ width: '150px', height: '100px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS Gold" style={{ maxHeight: '65px', maxWidth: '95px', objectFit: 'contain' }} /></div>
         </div>
 
         <div style={{ padding: '20px 28px' }}>
           {/* Customer Details */}
           <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '14px' }}><tbody>
-            <tr><td style={lb} width="130">Estimation No.</td><td style={vl}>{est.estimation_no || est.summary?.estimation_no || '—'}</td><td style={lb} width="60">Date</td><td style={vl} width="120">{new Date().toLocaleDateString('en-IN')}</td></tr>
+            <tr><td style={lb} width="130">Estimation No.</td><td style={vl}>{est.estimation_no || est.summary?.estimation_no || '—'}</td><td style={lb} width="60">Date</td><td style={vl} width="120">{formatDate(new Date())}</td><td style={{ border: cb, padding: '4px', textAlign: 'center', verticalAlign: 'top', width: '90px' }} rowSpan={5}>{photoUrl ? (<img src={photoUrl} alt="Customer" style={{ width: '80px', height: '95px', objectFit: 'cover', borderRadius: '2px' }} />) : (<div style={{ width: '80px', height: '95px', background: '#f0f6fb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', color: '#999', border: '1px dashed #bbb', margin: '0 auto' }}>Photo</div>)}</td></tr>
             <tr><td style={lb}>Name</td><td style={vl} colSpan={3}>{name}</td></tr>
             <tr><td style={lb}>Email ID</td><td style={vl}>{acc.email || ''}</td><td style={lb}>Mobile No.</td><td style={vl}>{acc.mobile || userIdentifier}</td></tr>
             <tr><td style={lb}>Present Address</td><td style={vl} colSpan={3}>{fA(present)}</td></tr>
@@ -732,7 +884,7 @@ function EstimationPdfView({ userIdentifier, applicationId }) {
           {/* Date / Place / Signature */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: '20px' }}>
             <table style={{ fontSize: '11px', borderCollapse: 'collapse' }}><tbody>
-              <tr><td style={lb}>Date</td><td style={{ ...vl, minWidth: '150px' }}>{new Date().toLocaleDateString('en-IN')}</td></tr>
+              <tr><td style={lb}>Date</td><td style={{ ...vl, minWidth: '150px' }}>{formatDate(new Date())}</td></tr>
               <tr><td style={lb}>Place</td><td style={vl}>{data?.application?.place || ''}</td></tr>
             </tbody></table>
             <div style={{ textAlign: 'center' }}>
@@ -759,7 +911,7 @@ function PaymentPdfView({ userIdentifier, applicationId }) {
   React.useEffect(() => {
     (async () => {
       try {
-        const r = await accountsAPI.searchCustomer(userIdentifier)
+        const r = await accountsAPI.searchCustomerSummary(userIdentifier, "customer,addresses,documents,applications,invoices,pledge_details")
         const d = r.data || {}
         setData(d)
 
@@ -849,15 +1001,15 @@ function PaymentPdfView({ userIdentifier, applicationId }) {
             <div style={{ fontSize: '10px', opacity: .85 }}>www.svsgold.com</div>
           </div>
           <div style={{ textAlign: 'center', color: '#fff' }}><div style={{ fontSize: '20px', fontWeight: 'bold', letterSpacing: '2px' }}>PAYMENT VOUCHER</div></div>
-          <div style={{ width: '100px', height: '70px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><img src="/svslogo-white.png" alt="SVS Gold" style={{ maxHeight: '65px', maxWidth: '95px', objectFit: 'contain' }} /></div>
+          <div style={{ width: '100px', height: '70px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS Gold" style={{ maxHeight: '65px', maxWidth: '95px', objectFit: 'contain' }} /></div>
         </div>
 
         <div style={{ padding: '20px 28px' }}>
 
           {/* Bill No / Application No */}
           <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '14px' }}><tbody>
-            <tr><td style={lb} width="130">Bill No.</td><td style={vl}>{inv.invoice_no || '—'}</td><td style={lb} width="130">Date</td><td style={vl}>{inv.invoice_date || ''}</td></tr>
-            <tr><td style={lb}>Application No.</td><td style={vl}>{app.application_no || ''}</td><td style={lb}>Application Date</td><td style={vl}>{app.application_date || ''}</td></tr>
+            <tr><td style={lb} width="130">Bill No.</td><td style={vl}>{inv.invoice_no || '—'}</td><td style={lb} width="130">Date</td><td style={vl}>{formatDate(inv.invoice_date)}</td></tr>
+            <tr><td style={lb}>Application No.</td><td style={vl}>{app.application_no || ''}</td><td style={lb}>Application Date</td><td style={vl}>{formatDate(app.application_date) || ''}</td></tr>
           </tbody></table>
 
           {/* Customer Details */}
@@ -978,7 +1130,7 @@ function PaymentPdfView({ userIdentifier, applicationId }) {
           {/* Date / Place */}
           <div style={{ marginTop: '16px' }}>
             <table style={{ fontSize: '11px', borderCollapse: 'collapse' }}><tbody>
-              <tr><td style={lb}>Date</td><td style={{ ...vl, minWidth: '150px' }}>{inv.invoice_date || new Date().toLocaleDateString('en-IN')}</td></tr>
+              <tr><td style={lb}>Date</td><td style={{ ...vl, minWidth: '150px' }}>{inv.invoice_date ? formatDate(inv.invoice_date) : formatDate(new Date())}</td></tr>
               <tr><td style={lb}>Place</td><td style={vl}>{app.place || ''}</td></tr>
             </tbody></table>
           </div>

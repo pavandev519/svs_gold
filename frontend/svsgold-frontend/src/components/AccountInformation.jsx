@@ -195,7 +195,7 @@ export default function AccountInformation({ isOpen, onToggle, data, onDataChang
               </select>
             </div>
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-3">Date of Birth</label>
+              <label className="block text-sm font-semibold text-gray-700 mb-3">Date of Birth <span className="text-red-500">*</span></label>
               <input
                 type="date"
                 value={data.date_of_birth || ''}

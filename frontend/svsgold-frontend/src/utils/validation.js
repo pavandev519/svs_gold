@@ -42,6 +42,17 @@ export const validateDateOfBirth = (dob) => {
   return date instanceof Date && !isNaN(date) && date < new Date()
 }
 
+// Format date to dd/mm/yyyy
+export const formatDate = (dateInput) => {
+  if (!dateInput) return '—'
+  const date = new Date(dateInput)
+  if (isNaN(date)) return dateInput
+  const d = String(date.getDate()).padStart(2, '0')
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const y = date.getFullYear()
+  return `${d}/${m}/${y}`
+}
+
 // Document validations
 export const validateDocumentFile = (file) => {
   if (!file) return { valid: false, error: 'File is required' }
@@ -104,7 +115,9 @@ export const validateCreateAccountForm = (formData, addresses, bankAccounts, doc
     errors.pan_no = 'PAN must be in format: ABCDE1234F'
   }
   
-  if (formData.date_of_birth && !validateDateOfBirth(formData.date_of_birth)) {
+  if (!formData.date_of_birth?.trim()) {
+    errors.date_of_birth = 'Date of birth is required'
+  } else if (!validateDateOfBirth(formData.date_of_birth)) {
     errors.date_of_birth = 'Date of birth must be in the past'
   }
 
@@ -164,13 +177,18 @@ export const validateCreateAccountForm = (formData, addresses, bankAccounts, doc
     }
   })
   
-  // === Documents — All required except 'Others' ===
-  const requiredDocTypes = ['Photo', 'Aadhar', 'PAN', 'Address Proof', 'Bank Details']
+  // === Documents — optional on account creation, can be added later ===
   const docs = documents || []
-  requiredDocTypes.forEach(docType => {
-    const doc = docs.find(d => d.document_type === docType)
-    if (!doc || !doc.file_path) {
-      errors[`doc_${docType}`] = `${docType} document is required`
+  docs.forEach((doc, index) => {
+    const hasFile = !!doc.file_path
+    const hasReference = !!doc.document_number?.trim()
+
+    if (hasFile && !doc.document_type?.trim()) {
+      errors[`doc_${index}`] = 'Select document type for uploaded file'
+    }
+
+    if (hasReference && !hasFile) {
+      errors[`doc_${index}`] = 'Uploaded file is required for document reference'
     }
   })
   

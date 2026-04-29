@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import {
   ChevronLeft, AlertCircle, Loader, Plus, Trash2, Upload,
   ChevronRight, Check, Save
@@ -63,6 +63,48 @@ export default function ApplicationForm({
   const [pledgeSaved, setPledgeSaved] = useState(false)
   const [ornamentsSaved, setOrnamentsSaved] = useState(false)
 
+  // Shared customer data state
+  const [customerData, setCustomerData] = useState(null)
+  const [customerDataLoading, setCustomerDataLoading] = useState(false)
+
+  /* ================================================================ */
+  /*  SHARED CUSTOMER DATA FETCHER                                    */
+  /* ================================================================ */
+  const fetchCustomerData = useCallback(async () => {
+    if (!userIdentifier || customerDataLoading) return customerData
+
+    setCustomerDataLoading(true)
+    try {
+      // Use lightweight summary API - only fetch customer and addresses for prefill
+      const res = await accountsAPI.searchCustomerSummary(userIdentifier, "customer,addresses")
+      const data = res.data || {}
+      setCustomerData(data)
+      return data
+    } catch (e) {
+      console.log('Customer summary failed, using fallbacks')
+      // Fallback: localStorage
+      try {
+        const stored = JSON.parse(localStorage.getItem('svs_customer_info') || '{}')
+        if (stored.name || stored.first_name) {
+          setCustomerData({ customer: stored, addresses: stored.addresses || [] })
+          return { customer: stored, addresses: stored.addresses || [] }
+        }
+      } catch {}
+
+      // Fallback: checkAccount
+      try {
+        const res2 = await accountsAPI.checkAccount({ mobile: userIdentifier })
+        const acc = res2.data?.account || res2.data || {}
+        setCustomerData({ customer: acc, addresses: [] })
+        return { customer: acc, addresses: [] }
+      } catch {}
+
+      return null
+    } finally {
+      setCustomerDataLoading(false)
+    }
+  }, [userIdentifier, customerDataLoading, customerData])
+
   /* ================================================================ */
   /*  DERIVED: Is this a Direct Buying application?                   */
   /* ================================================================ */
@@ -88,10 +130,16 @@ export default function ApplicationForm({
         let hasPledge = false
         let hasOrnaments = false
 
-        // Single API call — searchCustomer has everything
+        // Load the full summary required for editing an existing application
+        let d = null
         try {
-          const res = await accountsAPI.searchCustomer(userIdentifier)
-          const d = res.data || {}
+          const res = await accountsAPI.searchCustomerSummary(userIdentifier, "customer,addresses,applications,pledge_details,ornaments")
+          d = res.data || {}
+        } catch (e) {
+          console.error('Failed loading existing application details:', e)
+        }
+
+        if (d) {
           const cust = d.customer || {}
           const addresses = d.addresses || []
           const fullName = [cust.first_name, cust.last_name].filter(Boolean).join(' ')
@@ -120,8 +168,6 @@ export default function ApplicationForm({
             setOrnaments(appOrnaments.map((o, i) => ({ ...o, id: o.id || o.item_id || Date.now() + i })))
             hasOrnaments = true; setOrnamentsSaved(true)
           }
-        } catch {
-          console.log('Customer search failed during edit')
         }
 
         // Determine resume step
@@ -141,65 +187,40 @@ export default function ApplicationForm({
     }
 
     fetchExistingData()
-  }, [existingApplication])
+  }, [existingApplication, userIdentifier, fetchCustomerData])
 
   /* ================================================================ */
   /*  FETCH CUSTOMER INFO — pre-fill pledger name, address & branch   */
-  /*  Primary: /customers/search API                                  */
-  /*  Fallback: localStorage, checkAccount                            */
+  /*  Uses shared customer data fetcher                              */
   /* ================================================================ */
   useEffect(() => {
     if (!userIdentifier) return
 
     const fetchCustomerInfo = async () => {
-      let fullName = ''
-      let fullAddress = ''
-
-      // === Primary: /customers/search API ===
-      try {
-        const res = await accountsAPI.searchCustomer(userIdentifier)
-        const d = res.data || {}
+      const d = await fetchCustomerData()
+      if (d) {
         const cust = d.customer || {}
         const addresses = d.addresses || []
 
-        fullName = [cust.first_name, cust.last_name].filter(Boolean).join(' ')
+        const fullName = [cust.first_name, cust.last_name].filter(Boolean).join(' ')
+        let fullAddress = ''
         if (addresses.length > 0) {
           const a = addresses.find(a => /present|current/i.test(a.address_type)) || addresses[0]
           fullAddress = [a.address_line, a.street, a.city, a.state, a.pincode].filter(Boolean).join(', ')
         }
-      } catch (e) {
-        // Fallback: localStorage
-        try {
-          const stored = JSON.parse(localStorage.getItem('svs_customer_info') || '{}')
-          if (stored.name) fullName = stored.name
-          if (!fullName) fullName = [stored.first_name, stored.last_name].filter(Boolean).join(' ')
-          if (stored.addresses?.length > 0) {
-            const addr = stored.addresses.find(a => /present|current/i.test(a.address_type)) || stored.addresses[0]
-            fullAddress = [addr.address_line, addr.street, addr.city, addr.state, addr.pincode].filter(Boolean).join(', ')
-          }
-        } catch {}
 
-        // Fallback: checkAccount
-        if (!fullName) {
-          try {
-            const res2 = await accountsAPI.checkAccount({ mobile: userIdentifier })
-            const acc = res2.data?.account || res2.data || {}
-            fullName = acc.name || [acc.first_name, acc.last_name].filter(Boolean).join(' ') || ''
-          } catch {}
+        if (fullName || fullAddress) {
+          setPledgeDetails(prev => ({
+            ...prev,
+            pledger_name: prev.pledger_name || fullName || '',
+            pledger_address: prev.pledger_address || fullAddress || ''
+          }))
         }
-      }
-
-      if (fullName || fullAddress) {
-        setPledgeDetails(prev => ({
-          ...prev,
-          pledger_name: prev.pledger_name || fullName || '',
-          pledger_address: prev.pledger_address || fullAddress || ''
-        }))
       }
     }
 
     fetchCustomerInfo()
-  }, [userIdentifier])
+  }, [userIdentifier, fetchCustomerData])
 
   // Branch name in pledge is manually entered by user
 
@@ -297,7 +318,6 @@ export default function ApplicationForm({
       setError('Please add at least one ornament')
       return false
     }
-    const isPledge = applicationData.application_type === 'PLEDGE_RELEASE'
     for (let i = 0; i < ornaments.length; i++) {
       if (!ornaments[i].item_name?.trim()) {
         setError(`Ornament ${i + 1}: Item name is required`)
@@ -315,8 +335,8 @@ export default function ApplicationForm({
         setError(`Ornament ${i + 1}: Approx weight is required`)
         return false
       }
-      if (isPledge && !ornaments[i].item_photo_url) {
-        setError(`Ornament ${i + 1}: Pledge ticket upload is required`)
+      if (!ornaments[i].item_photo_url) {
+        setError(`Ornament ${i + 1}: ${applicationData.application_type === 'PLEDGE_RELEASE' ? 'Pledge ticket' : 'Item photo'} upload is required`)
         return false
       }
     }
@@ -375,6 +395,8 @@ export default function ApplicationForm({
           application_id: appId
         })
 
+        accountsAPI.clearCustomerCache(userIdentifier)
+
         setPledgeSaved(true)
         setStep(3) // go to ornaments
         return
@@ -393,12 +415,21 @@ export default function ApplicationForm({
           ornaments
         })
 
+        accountsAPI.clearCustomerCache(userIdentifier)
+
         setOrnamentsSaved(true)
 
         onSuccess({
           ...applicationData,
           application_id: appId,
           status: 'DRAFT',
+          total_quantity: ornaments.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),
+          total_weight_gms: ornaments.reduce((sum, item) => sum + (Number(item.approx_weight_gms) || 0), 0),
+          ornaments: ornaments.map((item, index) => ({
+            ...item,
+            item_id: item.item_id || item.id || `${appId}-${index}`,
+            application_id: appId
+          })),
           _allStepsComplete: true
         })
       }
@@ -749,7 +780,7 @@ export default function ApplicationForm({
           </div>
 
           <div>
-            <label className={labelClass}>{isPledgeRelease ? 'Pledge Ticket' : 'Item Photo'}{isPledgeRelease && <span className="text-red-500"> *</span>}</label>
+            <label className={labelClass}>{isPledgeRelease ? 'Pledge Ticket' : 'Item Photo'}<span className="text-red-500"> *</span></label>
             <div className="flex items-center gap-4">
               <input type="file" accept="image/*,.pdf" onChange={(e) => handleImageUpload(index, e.target.files[0])} className="hidden" id={`ornament-photo-${index}`} />
               <label htmlFor={`ornament-photo-${index}`} className="flex items-center gap-2 px-4 py-3 border-2 border-dashed border-amber-500 rounded-xl cursor-pointer hover:bg-amber-50 transition-all flex-1">

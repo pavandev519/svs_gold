@@ -16,13 +16,17 @@ export default function Documents({ isOpen, onToggle, data, onDataChange }) {
     const existing = data.documents || []
     return DOCUMENT_SLOTS.map(slot => {
       const found = existing.find(d => d.document_type === slot.key)
-      return found || {
+      return found ? {
+        ...found,
+        _newFile: false  // Mark existing documents as not new
+      } : {
         id: `doc_${slot.key}_${Date.now()}`,
         document_type: slot.key,
         document_number: '',
         file_path: '',
         file_name: '',
-        file_size_mb: 0
+        file_size_mb: 0,
+        _newFile: false
       }
     })
   }
@@ -30,10 +34,10 @@ export default function Documents({ isOpen, onToggle, data, onDataChange }) {
   const [documents, setDocuments] = useState(initDocuments)
   const [errors, setErrors] = useState({})
 
-  // Sync to parent on mount
+  // Sync to parent whenever document selections change
   useEffect(() => {
     onDataChange('documents', documents)
-  }, [])
+  }, [documents, onDataChange])
 
   const handleFileUpload = (index, e) => {
     const file = e.target.files?.[0]
@@ -51,7 +55,8 @@ export default function Documents({ isOpen, onToggle, data, onDataChange }) {
         ...newDocuments[index],
         file_name: file.name,
         file_size_mb: (file.size / (1024 * 1024)).toFixed(2),
-        file_path: event.target.result
+        file_path: event.target.result,
+        _newFile: true  // Mark as new file when uploaded
       }
       setDocuments(newDocuments)
       onDataChange('documents', newDocuments)

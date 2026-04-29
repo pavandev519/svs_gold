@@ -92,7 +92,7 @@ export default function LoginPage({ onLoginSuccess }) {
         <div className="relative z-10 w-full h-full flex flex-col justify-center items-center p-12">
           <div className="space-y-6 text-center w-full">
             <div>
-              <img src="/svslogo-white.png" alt="SVS Gold" className="mx-auto mb-4 drop-shadow-lg" style={{ width: '350px' }} />
+              <img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS Gold" className="mx-auto mb-4 drop-shadow-lg" style={{ width: '350px' }} />
             </div>
             <p className="text-lg max-w-md mx-auto leading-relaxed" style={{ color: '#6e4816' }}>
               Manage your accounts with elegance and efficiency
@@ -106,7 +106,7 @@ export default function LoginPage({ onLoginSuccess }) {
         <div className="w-full max-w-md">
           {/* Header */}
           <div className="mb-10 text-center">
-            <img src="/svslogo.png" alt="SVS Gold" className="h-20 mx-auto mb-6 lg:hidden" />
+            <img src={import.meta.env.BASE_URL + 'svslogo.png'} alt="SVS Gold" className="h-20 mx-auto mb-6 lg:hidden" />
             <h1 className="text-4xl font-bold text-gray-900 mb-2">Admin Login</h1>
             <p className="text-gray-600">Sign in to your admin account</p>
           </div>

@@ -111,6 +111,9 @@ export default function App() {
         }
       />
 
+      {/* Fallback for unmatched routes */}
+      <Route path="*" element={<Navigate to="/login" replace />} />
+
     </Routes>
   )
 }

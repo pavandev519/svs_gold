@@ -10,10 +10,14 @@ import { validateCreateAccountForm } from '../utils/validation'
 export default function CreateAccountPage({ loginData, onBackToLogin, onSuccess }) {
 
   const generateAccountCode = () => {
-    const uuid = crypto.randomUUID()
-    const numericPart = uuid.replace(/\D/g, '')
-    const randomThreeDigits = numericPart.slice(0, 3).padEnd(3, '0')
-    return `CUS_SVS_${randomThreeDigits}`
+    try {
+      const uuid = crypto.randomUUID()
+      const numericPart = uuid.replace(/\D/g, '')
+      const randomThreeDigits = numericPart.slice(0, 3).padEnd(3, '0')
+      return `CUS_SVS_${randomThreeDigits}`
+    } catch {
+      return `CUS_SVS_${Math.floor(100 + Math.random() * 900)}`
+    }
   }
 
   const [formData, setFormData] = useState({
@@ -140,7 +144,6 @@ export default function CreateAccountPage({ loginData, onBackToLogin, onSuccess 
         phone: formData.phone || '',
         email: formData.email || '',
         gender: formData.gender || '',
-        date_of_birth: formData.date_of_birth || '',
         aadhar_no: formData.aadhar_no || '',
         yearly_income: 0,
         occupation: formData.occupation || '',
@@ -152,7 +155,8 @@ export default function CreateAccountPage({ loginData, onBackToLogin, onSuccess 
         district: formData.district || '',
         city: formData.city || '',
         pincode: formData.pincode || '',
-        address_text: formData.address_text || ''
+        address_text: formData.address_text || '',
+        ...(formData.date_of_birth ? { date_of_birth: formData.date_of_birth } : {})
       }
 
       const accountResponse = await accountsAPI.createAccount(accountPayload)
@@ -245,7 +249,7 @@ export default function CreateAccountPage({ loginData, onBackToLogin, onSuccess 
             <h1 className="text-4xl font-bold mb-2" style={{ background: 'linear-gradient(135deg, #c9943a, #a36e24)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
               Create New Account
             </h1>
-            <p className="text-gray-600">Complete all sections to set up the customer account</p>
+            <p className="text-gray-600">Complete the required customer fields. Documents can be uploaded later from profile if needed.</p>
           </div>
         </div>
 
