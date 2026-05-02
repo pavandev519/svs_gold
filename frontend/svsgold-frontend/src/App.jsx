@@ -17,8 +17,7 @@ export default function App() {
       const storedLoginData = localStorage.getItem('svs_gold_login_data')
       if (storedLoginData) {
         const parsedData = JSON.parse(storedLoginData)
-        // Only restore if it's an admin session
-        if (parsedData.isAdmin) {
+        if (parsedData.isAdmin || parsedData.branchName) {
           setLoginData(parsedData)
         } else {
           localStorage.removeItem('svs_gold_login_data')
@@ -65,17 +64,17 @@ export default function App() {
       <Route
         path="/login"
         element={
-          loginData?.isAdmin
+          loginData
             ? <Navigate to="/dashboard" replace />
             : <LoginPage onLoginSuccess={handleLoginSuccess} />
         }
       />
 
-      {/* Dashboard — admin must be logged in */}
+      {/* Dashboard — users must be logged in */}
       <Route
         path="/dashboard"
         element={
-          loginData?.isAdmin
+          loginData
             ? <Dashboard loginData={loginData} onLogout={handleLogout} />
             : <Navigate to="/login" replace />
         }
@@ -85,7 +84,7 @@ export default function App() {
       <Route
         path="/estimation"
         element={
-          loginData?.isAdmin
+          loginData
             ? <EstimationPage />
             : <Navigate to="/login" replace />
         }
@@ -95,7 +94,7 @@ export default function App() {
       <Route
         path="/payment"
         element={
-          loginData?.isAdmin
+          loginData
             ? <PaymentPage />
             : <Navigate to="/login" replace />
         }
@@ -105,7 +104,7 @@ export default function App() {
       <Route
         path="/payment-preview"
         element={
-          loginData?.isAdmin
+          loginData
             ? <InvoicePreviewPage />
             : <Navigate to="/login" replace />
         }

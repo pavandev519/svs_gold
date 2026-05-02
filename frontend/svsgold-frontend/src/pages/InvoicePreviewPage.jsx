@@ -53,7 +53,7 @@ export default function InvoicePreviewPage() {
       <html><head><title>Invoice ${invoice?.invoice_no}</title>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
       <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         body { font-family: 'DM Sans', sans-serif; background: #fff; padding: 0; }
         @media print { body { padding: 0; } .no-print { display: none !important; } }
       </style></head><body>${printContent}</body></html>

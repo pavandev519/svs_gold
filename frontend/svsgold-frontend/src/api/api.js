@@ -1,6 +1,7 @@
 import axios from 'axios'
 
 const API_BASE_URL = 'http://localhost:8000'
+const API_BASE_URL = 'https://svs-gold-1.onrender.com'
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -127,7 +128,7 @@ export const accountsAPI = {
 export const applicationsAPI = {
   getGoldItems: () => api.get('/gold-items'),
   getBranches: () => api.get('/branches'),
-  getApplicationsByUser: (mobile) => api.get(`/applications/by-user?mobile=${mobile}`),
+  getApplicationsByUser: (mobile, branchName) => api.get(`/applications/by-user?mobile=${encodeURIComponent(mobile)}${branchName ? `&branch_name=${encodeURIComponent(branchName)}` : ''}`),
   getApplicationPreview: (mobile, applicationId) => api.get(`/applications/application-preview?mobile=${mobile}&application_id=${applicationId}`),
   getOrnamentsByApplication: (mobile, applicationId) => api.get(`/applications/ornaments/by-application?mobile=${mobile}&application_id=${applicationId}`),
   getEstimationPreview: (mobile, applicationId) => api.get(`/applications/estimation-preview?mobile=${mobile}&application_id=${applicationId}`),
@@ -154,7 +155,7 @@ export const transactionsAPI = {
 }
 
 export const estimationsAPI = {
-  getByUser: (mobile) => api.get(`/estimations/by-user?mobile=${mobile}`)
+  getByUser: (mobile, branchName) => api.get(`/estimations/by-user?mobile=${encodeURIComponent(mobile)}${branchName ? `&branch_name=${encodeURIComponent(branchName)}` : ''}`)
 }
 
 export default api
