@@ -1,10 +1,29 @@
 import React, { useState } from 'react'
 import { Lock, User, AlertCircle, Eye, EyeOff } from 'lucide-react'
 
-// Hardcoded admin credentials
-const ADMIN_CREDENTIALS = {
-  username: 'admin',
-  password: 'admin123'
+const USER_ACCOUNTS = {
+  admin: {
+    username: 'admin',
+    password: 'admin123',
+    isAdmin: true,
+    displayName: 'Admin'
+  },
+  dsnruser: {
+    username: 'dsnruser',
+    password: 'dsnr123',
+    isAdmin: false,
+    displayName: 'dsnr user',
+    branchName: 'Dilsukhnagar',
+    branchCode: 'DL1'
+  },
+  narauser: {
+    username: 'narauser',
+    password: 'nara123',
+    isAdmin: false,
+    displayName: 'nara user',
+    branchName: 'Narayanaguda',
+    branchCode: 'NY1'
+  }
 }
 
 export default function LoginPage({ onLoginSuccess }) {
@@ -33,17 +52,17 @@ export default function LoginPage({ onLoginSuccess }) {
     // Simulate a brief network delay for UX
     await new Promise(resolve => setTimeout(resolve, 600))
 
-    if (
-      username.trim() === ADMIN_CREDENTIALS.username &&
-      password === ADMIN_CREDENTIALS.password
-    ) {
+    const normalizedUsername = username.trim().toLowerCase()
+    const account = USER_ACCOUNTS[normalizedUsername]
+
+    if (account && password === account.password) {
       onLoginSuccess({
-        isAdmin: true,
-        username: username.trim(),
+        ...account,
+        username: account.username,
         accountExists: true
       })
     } else {
-      setError('Invalid username or password')
+      setError('Invalid username or password. Allowed usernames: admin, dsnruser, narauser')
     }
 
     setLoading(false)
@@ -107,8 +126,8 @@ export default function LoginPage({ onLoginSuccess }) {
           {/* Header */}
           <div className="mb-10 text-center">
             <img src={import.meta.env.BASE_URL + 'svslogo.png'} alt="SVS Gold" className="h-20 mx-auto mb-6 lg:hidden" />
-            <h1 className="text-4xl font-bold text-gray-900 mb-2">Admin Login</h1>
-            <p className="text-gray-600">Sign in to your admin account</p>
+            <h1 className="text-4xl font-bold text-gray-900 mb-2">SVS Gold Login</h1>
+            <p className="text-gray-600">Sign in with your admin or branch credentials</p>
           </div>
 
           {/* Form */}

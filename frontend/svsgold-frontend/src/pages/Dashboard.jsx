@@ -33,6 +33,7 @@ export default function Dashboard({ loginData, onLogout }) {
   const [error, setError] = useState('')
   const [branchFilter, setBranchFilter] = useState('')
   const [branches, setBranches] = useState([])
+  const [branchError, setBranchError] = useState('')
 
   /* ---- Collapsible & View State ---- */
   const [expandedSections, setExpandedSections] = useState({
@@ -53,18 +54,35 @@ export default function Dashboard({ loginData, onLogout }) {
     })()
   }, [])
 
+  useEffect(() => {
+    if (loginData?.branchName && !loginData?.isAdmin) {
+      setBranchFilter(loginData.branchName)
+    }
+  }, [loginData])
+
+  const handleBranchFilterChange = (value) => {
+    if (loginData?.branchName && !loginData?.isAdmin && value && value !== loginData.branchName) {
+      setBranchError(`Your login is restricted to ${loginData.branchName}. Please select that branch.`)
+      setBranchFilter(loginData.branchName)
+      return
+    }
+
+    setBranchError('')
+    setBranchFilter(value)
+  }
+
   /* ---- A key we bump to force ApplicationsView to re-mount & re-fetch ---- */
   const [refreshKey, setRefreshKey] = useState(0)
 
   /* ================================================================ */
   /*  FETCH APPLICATIONS                                              */
   /* ================================================================ */
-  const fetchApplications = useCallback(async (mobile) => {
+  const fetchApplications = useCallback(async (mobile, branchName) => {
     if (!mobile) return
     try {
       setLoading(true)
       setError('')
-      const response = await applicationsAPI.getApplicationsByUser(mobile)
+      const response = await applicationsAPI.getApplicationsByUser(mobile, branchName)
       if (!response?.data?.applications) {
         setApplications([])
       } else {
@@ -81,7 +99,6 @@ export default function Dashboard({ loginData, onLogout }) {
       setLoading(false)
     }
   }, [])
-
   /* ================================================================ */
   /*  CUSTOMER SEARCH                                                 */
   /* ================================================================ */
@@ -171,6 +188,9 @@ export default function Dashboard({ loginData, onLogout }) {
     setShowCreateAccount(false)
     setShowCreateForm(false)
     setCurrentPage(page)
+    if (loginData?.branchName && !loginData?.isAdmin) {
+      setBranchFilter(loginData.branchName)
+    }
     localStorage.setItem('svs_gold_login_data', JSON.stringify({
       ...loginData,
       mobile,
@@ -180,7 +200,7 @@ export default function Dashboard({ loginData, onLogout }) {
     setRefreshKey(prev => prev + 1)
     // Fetch customer details for display
     fetchCustomerDetails(mobile)
-    fetchApplications(mobile)
+    fetchApplications(mobile, loginData?.branchName)
   }, [loginData, fetchApplications])
 
   const activateCustomerInProfile = useCallback((mobile) => {
@@ -277,7 +297,7 @@ export default function Dashboard({ loginData, onLogout }) {
   const menuItems = [
     { id: 'applications', label: 'Applications', icon: FileText, color: 'text-amber-700' },
     ...(customerFound ? [{ id: 'estimations', label: 'Estimations', icon: Calculator, color: 'text-amber-700' }] : []),
-    { id: 'transactions', label: 'Transactions', icon: DollarSign, color: 'text-amber-700' },
+    ...(loginData?.isAdmin ? [{ id: 'transactions', label: 'Transactions', icon: DollarSign, color: 'text-amber-700' }] : []),
     { id: 'profile', label: 'Profile', icon: Settings, color: 'text-amber-700' }
   ]
 
@@ -369,7 +389,10 @@ export default function Dashboard({ loginData, onLogout }) {
               SVS Gold CRM
             </h1>
             <p className="text-gray-500 text-sm mt-1">
-              Logged in as: <span className="font-medium text-gray-700">{loginData.username || 'Admin'}</span>
+              Logged in as: <span className="font-medium text-gray-700">{loginData.displayName || loginData.username || 'Admin'}</span>
+              {loginData.branchName && !loginData.isAdmin && (
+                <span className="ml-3 text-amber-700 font-medium">• Branch: {loginData.branchName}</span>
+              )}
               {customerMobile && (
                 <span className="ml-3 text-amber-700 font-medium">• Customer: {customerMobile}</span>
               )}
@@ -585,6 +608,7 @@ export default function Dashboard({ loginData, onLogout }) {
                   {showCreateForm && (
                     <ApplicationForm
                       userIdentifier={customerMobile}
+                      assignedBranch={loginData?.branchName}
                       onSuccess={handleApplicationSuccess}
                       onCancel={() => setShowCreateForm(false)}
                     />
@@ -599,21 +623,38 @@ export default function Dashboard({ loginData, onLogout }) {
                             <label className="text-sm font-semibold text-gray-600 block mb-2">Filter by Branch</label>
                             <select
                               value={branchFilter}
-                              onChange={(e) => setBranchFilter(e.target.value)}
-                              className="w-full px-4 py-3 bg-white border-2 border-gray-200 rounded-xl text-gray-800 text-sm focus:outline-none focus:border-amber-500 transition-all"
+                              onChange={(e) => handleBranchFilterChange(e.target.value)}
+                              disabled={loginData?.branchName && !loginData?.isAdmin}
+                              className={`w-full px-4 py-3 bg-white border-2 border-gray-200 rounded-xl text-gray-800 text-sm focus:outline-none focus:border-amber-500 transition-all ${
+                                loginData?.branchName && !loginData?.isAdmin
+                                  ? 'opacity-50 cursor-not-allowed bg-gray-100'
+                                  : ''
+                              }`}
                             >
                               <option value="">All Branches</option>
                               {(() => {
-                                const appBranches = [...new Set(applications.map(a => a.place).filter(Boolean))]
+                                const appBranches = [...new Set(applications.map(a => a.branch).filter(Boolean))]
                                 const apiBranches = branches.map(b => b.branch_name)
                                 const allNames = [...new Set([...appBranches, ...apiBranches])]
                                 return allNames.map(name => <option key={name} value={name}>{name}</option>)
                               })()}
                             </select>
+
+                            {loginData?.branchName && !loginData?.isAdmin && (
+                              <p className="mt-3 text-sm text-amber-700">
+                                Your login is restricted to <strong>{loginData.branchName}</strong>. Applications from other branches are hidden.
+                              </p>
+                            )}
+
+                            {branchError && (
+                              <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                                {branchError}
+                              </div>
+                            )}
                           </div>
 
                           <div className="md:col-span-2 flex flex-col md:flex-row md:justify-end md:items-center gap-3">
-                            {branchFilter && (
+                            {branchFilter && !loginData?.branchName && !loginData?.branchName && (
                               <button
                                 onClick={() => setBranchFilter('')}
                                 className="text-xs text-amber-700 hover:text-amber-800 font-medium underline"
@@ -652,7 +693,7 @@ export default function Dashboard({ loginData, onLogout }) {
                       {/* Empty State */}
                       {!loading && !error && (() => {
                         const filtered = branchFilter
-                          ? applications.filter(a => a.place === branchFilter)
+                          ? applications.filter(a => a.branch === branchFilter)
                           : applications
                         return filtered.length === 0 ? (
                           <div className="bg-white rounded-2xl shadow-lg p-12 text-center">
@@ -676,6 +717,7 @@ export default function Dashboard({ loginData, onLogout }) {
                               loading={loading}
                               error={error}
                               onApplicationsUpdate={setApplications}
+                              assignedBranch={loginData?.branchName}
                             />
                           </div>
                         )
@@ -711,7 +753,7 @@ export default function Dashboard({ loginData, onLogout }) {
           )}
 
           {currentPage === 'estimations' && customerFound && (
-            <EstimationsSection customerMobile={customerMobile} />
+            <EstimationsSection customerMobile={customerMobile} branchName={loginData?.branchName} />
           )}
         </main>
       </div>
@@ -1470,7 +1512,8 @@ function TransactionsSection({ customerMobile })
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Transactions");
-    XLSX.writeFile(wb, "transactions.xlsx");
+    const dateSuffix = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `transactions-${dateSuffix}.xlsx`);
   };
 
   return (
@@ -1532,6 +1575,8 @@ function TransactionsSection({ customerMobile })
               key={p}
               onClick={() => {
                 setPeriod(p);
+                setFromDate('');
+                setToDate('');
                 setFilteredItems(
                   sortItems(
                     applyFilters(data.invoice_items, data.invoices, p),
@@ -1570,18 +1615,35 @@ function TransactionsSection({ customerMobile })
 
         {/* CUSTOM DATE */}
         <div className="flex gap-3 items-center">
-          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="border px-2 py-1 rounded"/>
-          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="border px-2 py-1 rounded"/>
+          <input
+            type="date"
+            value={fromDate}
+            onChange={(e) => {
+              setPeriod('all');
+              setFromDate(e.target.value);
+            }}
+            className="border px-2 py-1 rounded"
+          />
+          <input
+            type="date"
+            value={toDate}
+            onChange={(e) => {
+              setPeriod('all');
+              setToDate(e.target.value);
+            }}
+            className="border px-2 py-1 rounded"
+          />
 
           <button
-            onClick={() =>
+            onClick={() => {
+              setPeriod('all');
               setFilteredItems(
                 sortItems(
                   applyFilters(data.invoice_items, data.invoices),
                   sortOrder
                 )
               )
-            }
+            }}
             className="bg-[#B68A2E] text-white px-3 py-1 rounded"
           >
             Apply
@@ -1682,7 +1744,7 @@ function TransactionsSection({ customerMobile })
 /* ================================================================ */
 /*  ESTIMATIONS SECTION — Shows all estimations for a customer      */
 /* ================================================================ */
-function EstimationsSection({ customerMobile }) {
+function EstimationsSection({ customerMobile, branchName }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -1693,14 +1755,14 @@ function EstimationsSection({ customerMobile }) {
     const load = async () => {
       setLoading(true); setError('')
       try {
-        const res = await estimationsAPI.getByUser(customerMobile)
+        const res = await estimationsAPI.getByUser(customerMobile, branchName)
         setData(res.data)
       } catch (e) {
         setError('Failed to load estimations: ' + (e.message || 'Unknown error'))
       } finally { setLoading(false) }
     }
     load()
-  }, [customerMobile])
+  }, [customerMobile, branchName])
 
   const cur = (n) => n != null ? '₹' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '₹0.00'
 

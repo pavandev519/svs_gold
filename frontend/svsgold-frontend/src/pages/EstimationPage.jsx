@@ -485,7 +485,7 @@ export default function EstimationPage() {
                 <div id="estimation-print-area" style={{ fontFamily: "'Times New Roman',Georgia,serif", maxWidth: '750px', margin: '0 auto', background: '#fff', border: '1px solid #ddd', borderRadius: '4px', overflow: 'hidden' }}>
 
                   {/* Header */}
-                  <div style={{ background: `linear-gradient(180deg, #3a7ab5, ${blue})`, padding: '18px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div className="estimation-header" style={{ backgroundColor: '#3a7ab5', backgroundImage: `linear-gradient(180deg, #3a7ab5, ${blue})`, padding: '18px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div style={{ color: '#fff', lineHeight: '1.5' }}>
                       <div style={{ fontSize: '16px', fontWeight: 'bold' }}>SVS GOLD PRIVATE LIMITED</div>
                       <div style={{ fontSize: '10px', opacity: .85 }}>{branchInfo?.full_address_txt}</div>
@@ -640,7 +640,7 @@ export default function EstimationPage() {
                       const el = document.getElementById('estimation-print-area')
                       if (!el) return
                       const w = window.open('','_blank')
-                      w.document.write(`<html><head><title>Estimation</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Times New Roman',serif;background:#fff}@media print{@page{margin:10mm}}</style></head><body>${el.innerHTML}</body></html>`)
+                      w.document.write(`<html><head><title>Estimation</title><style>*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}html,body{background:#fff!important;color:#000!important;font-family:'Times New Roman',serif}body{padding:0;margin:0}@media print{.no-print{display:none!important}html,body{background:#fff!important;color:#000!important}body{margin:0;padding:0}@page{margin:10mm}#estimation-print-area .estimation-header{background-color:#3a7ab5!important;background-image:none!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}#estimation-print-area .estimation-header, #estimation-print-area .estimation-header *{color:#fff!important} }div,table,td,th{background-clip:padding-box}</style></head><body>${el.innerHTML}</body></html>`)
                       w.document.close(); setTimeout(() => { w.print(); w.close() }, 400)
                     }}
                     className="px-6 py-2.5 flex items-center gap-2 bg-white text-gray-700 font-medium rounded-xl shadow-sm border border-gray-200 transition-all hover:bg-gray-50 text-sm"

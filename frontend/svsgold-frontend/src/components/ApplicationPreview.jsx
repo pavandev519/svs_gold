@@ -70,17 +70,19 @@ export default function ApplicationPreview({ application, userIdentifier, onBack
 
         setPreviewData(preview)
 
-        // Fetch branch info using place from search API application
+        // Fetch branch info using place or branch fields from application data
         try {
           const br = await applicationsAPI.getBranches()
           if (!active) {
             return
           }
           const branches = br.data?.branches || []
-          const place = (appObj?.place || application?.place || '').toLowerCase().trim()
-          if (place) {
-            let matched = branches.find(b => b.branch_name.toLowerCase() === place)
-            if (!matched) matched = branches.find(b => b.branch_name.toLowerCase().includes(place) || place.includes(b.branch_name.toLowerCase()))
+          const normalize = (value) => (typeof value === 'string' ? value.toLowerCase().trim() : '')
+          const branchCandidate = normalize(appObj?.place) || normalize(appObj?.branch) || normalize(appObj?.branch_name) || normalize(application?.place) || normalize(application?.branch) || normalize(application?.branch_name)
+          if (branchCandidate) {
+            let matched = branches.find(b => normalize(b.branch_name) === branchCandidate || normalize(b.branch_code) === branchCandidate)
+            if (!matched) matched = branches.find(b => normalize(b.branch_name).includes(branchCandidate) || branchCandidate.includes(normalize(b.branch_name)))
+            if (!matched) matched = branches.find(b => normalize(b.full_address_txt).includes(branchCandidate) || normalize(b.branch_address).includes(branchCandidate) || normalize(b.address).includes(branchCandidate))
             if (matched) setBranchInfo(matched)
           }
         } catch {}
@@ -122,7 +124,7 @@ export default function ApplicationPreview({ application, userIdentifier, onBack
   const handlePrint = () => {
     const h = printRef.current?.innerHTML; if (!h) return
     const w = window.open('', '_blank')
-    w.document.write(`<html><head><meta charset="utf-8"><title>Application</title><style>*{margin:0;padding:0;box-sizing:border-box}html,body{background:#fff!important;color:#000!important;font-family:'Times New Roman',serif}body{padding:0;margin:0}@media print{.no-print{display:none!important}html,body{background:#fff!important;color:#000!important}body{margin:0;padding:0}@page{size:A4;margin:8mm 10mm;widows:3;orphans:3}[style*="pageBreakBefore"]{page-break-before:always}}</style></head><body>${h}</body></html>`)
+    w.document.write(`<html><head><meta charset="utf-8"><title>Application</title><style>*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}html,body{background:#fff!important;color:#000!important;font-family:'Times New Roman',serif}body{padding:0;margin:0}@media print{.no-print{display:none!important}html,body{background:#fff!important;color:#000!important}body{margin:0;padding:0}@page{size:A4;margin:8mm 10mm;widows:3;orphans:3}[style*="pageBreakBefore"]{page-break-before:always}}div,table,td,th{background-clip:padding-box}</style></head><body>${h}</body></html>`)
     w.document.close(); setTimeout(() => { w.print(); w.close() }, 400)
   }
 
@@ -161,6 +163,9 @@ export default function ApplicationPreview({ application, userIdentifier, onBack
   const findAddress = (pattern) => normalizedAddresses.find(a => pattern.test(`${a.address_type || ''} ${a.address_text || ''}`))
   const present = findAddress(/present|current|residential/i) || normalizedAddresses[0] || app.present_address || app.address_text || acc.address_text || null
   const perm = findAddress(/permanent/i) || normalizedAddresses[1] || app.permanent_address || app.address_text || acc.address_text || present
+
+  const branchAddress = branchInfo?.full_address_txt || branchInfo?.branch_address || branchInfo?.address || branchInfo?.address_text || branchInfo?.branch_name || app.place || app.branch || ''
+  const branchPhone = branchInfo?.phone_number || branchInfo?.phone || branchInfo?.contact_number || branchInfo?.contact || ''
 
   const formatAddress = (a) => {
     if (typeof a === 'string') return a
@@ -218,17 +223,18 @@ export default function ApplicationPreview({ application, userIdentifier, onBack
       {/*  PAGE 1: APPLICATION FORM                                       */}
       {/* ================================================================ */}
       <div ref={printRef}>
-        <div style={{ fontFamily: "'Times New Roman',Georgia,serif", maxWidth: '720px', margin: '0 auto', background: '#fff', border: '1px solid #ddd', borderRadius: '4px', overflow: 'hidden' }}>
+        <div style={{ fontFamily: "'Times New Roman',Georgia,serif", maxWidth: '750px', margin: '0 auto', background: '#fff', border: '1px solid #ddd', borderRadius: '4px', overflow: 'hidden', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
 
           {/* HEADER */}
-          <div style={{ background: hBg, padding: '12px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ color: '#fff', lineHeight: '1.3', fontSize: '9.5px' }}>
-              <div style={{ fontSize: '14px', fontWeight: 'bold' }}>SVS GOLD</div>
-              <div style={{ fontSize: '8px', opacity: .85 }}>{branchInfo?.full_address_txt}</div>
-              <div style={{ fontSize: '8px', opacity: .85 }}>{branchInfo?.phone_number}</div>
+          <div style={{ backgroundColor: '#3a7ab5', backgroundImage: 'linear-gradient(180deg, #3a7ab5, #2c5f8a)', padding: '18px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
+            <div style={{ color: '#fff', lineHeight: '1.3', fontSize: '9.5px', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
+              <div style={{ fontSize: '14px', fontWeight: 'bold' }}>SVS GOLD PRIVATE LIMITED</div>
+              {branchAddress ? <div style={{ fontSize: '8px', opacity: .85 }}>{branchAddress}</div> : null}
+              {branchPhone ? <div style={{ fontSize: '8px', opacity: .85 }}>{branchPhone}</div> : null}
+              <div style={{ fontSize: '8px', opacity: .85 }}>www.svsgold.com</div>
             </div>
             <div style={{ textAlign: 'center', color: '#fff' }}>
-              <div style={{ fontSize: '18px', fontWeight: 'bold', letterSpacing: '1px' }}>APPLICATION</div>
+              <div style={{ fontSize: '18px', fontWeight: 'bold', letterSpacing: '1px' }}>APPLICATION FORM</div>
             </div>
             <div style={{ width: '70px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS Gold" style={{ maxHeight: '48px', maxWidth: '65px', objectFit: 'contain' }} />

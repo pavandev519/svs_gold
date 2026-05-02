@@ -9,7 +9,8 @@ export default function ApplicationForm({
   userIdentifier,
   onSuccess,
   onCancel,
-  existingApplication
+  existingApplication,
+  assignedBranch
 }) {
 
   const [step, setStep] = useState(1)
@@ -31,7 +32,7 @@ export default function ApplicationForm({
     application_type: 'PLEDGE_RELEASE',
     application_date: new Date().toISOString().split('T')[0],
     application_no: generateApplicationNumber(userIdentifier),
-    place: '',
+    place: assignedBranch || '',
     status: 'DRAFT'
   }
 
@@ -55,6 +56,7 @@ export default function ApplicationForm({
     existingApplication ? { ...defaultApplication, ...existingApplication, mobile: userIdentifier } : defaultApplication
   )
   const [pledgeDetails, setPledgeDetails] = useState(defaultPledge)
+  const branchLocked = Boolean(assignedBranch)
   const [ornaments, setOrnaments] = useState([])
 
   const [applicationId, setApplicationId] = useState(
@@ -222,6 +224,13 @@ export default function ApplicationForm({
     fetchCustomerInfo()
   }, [userIdentifier, fetchCustomerData])
 
+  useEffect(() => {
+    if (assignedBranch) {
+      setApplicationData(prev => ({ ...prev, place: prev.place || assignedBranch }))
+      setPledgeDetails(prev => ({ ...prev, branch_name: prev.branch_name || assignedBranch }))
+    }
+  }, [assignedBranch])
+
   // Branch name in pledge is manually entered by user
 
   /* ================================================================ */
@@ -229,6 +238,11 @@ export default function ApplicationForm({
   /* ================================================================ */
 
   const handleBasicChange = (field, value) => {
+    if (field === 'place' && branchLocked && value !== assignedBranch) {
+      setError(`Branch selection is locked to ${assignedBranch}.`)
+      return
+    }
+
     setApplicationData(prev => ({ ...prev, [field]: value }))
     setError('')
   }
@@ -296,6 +310,11 @@ export default function ApplicationForm({
     }
     if (!applicationData.place?.trim()) {
       setError('Please select a branch')
+      return false
+    }
+
+    if (assignedBranch && applicationData.place !== assignedBranch) {
+      setError(`Branch must match your login branch ${assignedBranch}`)
       return false
     }
     return true
@@ -368,6 +387,7 @@ export default function ApplicationForm({
         } else {
           const createRes = await applicationsAPI.createApplication({
             ...applicationData,
+            place: assignedBranch || applicationData.place,
             status: 'DRAFT'
           })
           appId = createRes.data.application_id
@@ -563,13 +583,21 @@ export default function ApplicationForm({
         </div>
         <div>
           <label className={labelClass}>Branch <span className="text-red-500">*</span></label>
-          <select value={applicationData.place} onChange={(e) => handleBasicChange('place', e.target.value)} className={inputClass}>
+          <select
+            value={applicationData.place}
+            onChange={(e) => handleBasicChange('place', e.target.value)}
+            className={inputClass}
+            disabled={branchLocked}
+          >
             <option value="">Select Branch</option>
             {branches.length > 0
               ? branches.map(b => <option key={b.branch_code} value={b.branch_name}>{b.branch_name}</option>)
               : <><option value="Dilsukhnagar">Dilsukhnagar</option><option value="Narayanguda">Narayanguda</option></>
             }
           </select>
+          {branchLocked && (
+            <p className="mt-2 text-sm text-amber-700">Branch is fixed to <strong>{assignedBranch}</strong> for this login.</p>
+          )}
         </div>
       </div>
 

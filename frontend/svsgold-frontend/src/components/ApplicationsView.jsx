@@ -764,7 +764,20 @@ function EstimationPdfView({ userIdentifier, applicationId }) {
   const photoUrl = acc.photo_url || photoDoc?.file_path || ''
   const fA = (a) => [a?.address_line, a?.street, a?.city, a?.state, a?.pincode].filter(Boolean).join(', ')
 
-  const totalNet = est.summary?.total_net_amount || items.reduce((s, it) => s + (parseFloat(it.net_amount) || 0), 0)
+  const calcItem = (it) => {
+    const gw = parseFloat(it.gross_weight_gms || it.gross_weight || 0)
+    const sw = parseFloat(it.stone_weight_gms || it.stone_weight_in_carats || 0)
+    const nw = gw - sw
+    const purity = parseFloat(it.purity_percentage || it.purity_in_percent || 0)
+    const rate = parseFloat(it.gold_rate_per_gm || 0)
+    const pureWeight = nw * (purity / 100)
+    const gross = pureWeight * rate
+    const deduct = parseFloat(it.deduction_percentage || 0)
+    const net = gross - (gross * deduct / 100)
+    return { gross: Math.round(gross * 100) / 100, net: Math.round(net * 100) / 100 }
+  }
+
+  const totalNet = est.summary?.total_net_amount || items.reduce((s, it) => s + (calcItem(it).net || 0), 0)
   const totalDue = parseFloat(pledge.total_due) || 0
   const isPR = data?.application?.application_type === 'PLEDGE_RELEASE'
   const finalAmount = isPR ? totalNet - totalDue : totalNet
@@ -829,22 +842,25 @@ function EstimationPdfView({ userIdentifier, applicationId }) {
               ))}
             </tr></thead>
             <tbody>
-              {items.map((it, i) => (
-                <tr key={i}>
-                  <td style={{ ...vl, textAlign: 'center' }}>{i+1}</td>
-                  <td style={vl}>{it.item_name}</td>
-                  <td style={{ ...vl, textAlign: 'center' }}>{it.quantity}</td>
-                  <td style={{ ...vl, textAlign: 'center' }}>{it.gross_weight_gms}</td>
-                  <td style={{ ...vl, textAlign: 'center' }}>{it.stone_weight_gms || 0}</td>
-                  <td style={{ ...vl, textAlign: 'center' }}>{it.net_weight || (parseFloat(it.gross_weight_gms||0) - parseFloat(it.stone_weight_gms||0)).toFixed(2)}</td>
-                  <td style={{ ...vl, textAlign: 'center' }}>{it.gold_rate_per_gm}</td>
-                  <td style={{ ...vl, textAlign: 'center' }}>{it.purity_percentage}%</td>
-                  <td style={{ ...vl, textAlign: 'center' }}>₹{Number(it.gross_amount || 0).toLocaleString('en-IN')}</td>
-                  <td style={{ ...vl, textAlign: 'center' }}>{it.deduction_percentage || 0}%</td>
-                  <td style={{ ...vl, textAlign: 'center', fontWeight: 'bold' }}>₹{Number(it.net_amount || 0).toLocaleString('en-IN')}</td>
-                  <td style={{ ...vl, textAlign: 'center', padding: '2px' }}></td>
-                </tr>
-              ))}
+              {items.map((it, i) => {
+                const calc = calcItem(it)
+                return (
+                  <tr key={i}>
+                    <td style={{ ...vl, textAlign: 'center' }}>{i+1}</td>
+                    <td style={vl}>{it.item_name}</td>
+                    <td style={{ ...vl, textAlign: 'center' }}>{it.quantity}</td>
+                    <td style={{ ...vl, textAlign: 'center' }}>{it.gross_weight_gms || it.gross_weight}</td>
+                    <td style={{ ...vl, textAlign: 'center' }}>{it.stone_weight_gms || it.stone_weight_in_carats || 0}</td>
+                    <td style={{ ...vl, textAlign: 'center' }}>{it.net_weight || ((parseFloat(it.gross_weight_gms||it.gross_weight||0) - parseFloat(it.stone_weight_gms||it.stone_weight_in_carats||0)).toFixed(2))}</td>
+                    <td style={{ ...vl, textAlign: 'center' }}>{it.gold_rate_per_gm}</td>
+                    <td style={{ ...vl, textAlign: 'center' }}>{it.purity_percentage || it.purity_in_percent}%</td>
+                    <td style={{ ...vl, textAlign: 'center' }}>₹{calc.gross.toLocaleString('en-IN')}</td>
+                    <td style={{ ...vl, textAlign: 'center' }}>{it.deduction_percentage || 0}%</td>
+                    <td style={{ ...vl, textAlign: 'center', fontWeight: 'bold' }}>₹{calc.net.toLocaleString('en-IN')}</td>
+                    <td style={{ ...vl, textAlign: 'center', padding: '2px' }}></td>
+                  </tr>
+                )
+              })}
               {Array.from({ length: Math.max(0, 5 - items.length) }).map((_, i) => (
                 <tr key={`e${i}`}>{Array.from({length:12}).map((_,j) => <td key={j} style={{ ...vl, height: '24px' }}>&nbsp;</td>)}</tr>
               ))}
@@ -875,8 +891,7 @@ function EstimationPdfView({ userIdentifier, applicationId }) {
             <ol style={{ fontSize: '9.5px', lineHeight: '1.7', paddingLeft: '16px', margin: 0 }}>
               <li style={{ marginBottom: '3px' }}>SVS Gold is not responsible for any loss after melting such as weight loss or purity loss. The customer will not have any claim for the weight loss and purity loss.</li>
               <li style={{ marginBottom: '3px' }}>After melting, if the gold is rejected by the SVS Gold due to inadequate purity or customer rejects the gold due to any reason, the melted gold (after melting) will be returned to the customer. The Customer agrees and undertakes not to claim gold in its earlier form, shape size and weight as it was prior to melting of gold ornament and agrees that SVS Gold shall not be held liable to restore gold into original form, size and weight as it was before melting and the customer is liable to refund full advance amount to Gold.</li>
-              <li style={{ marginBottom: '3px' }}>The above gold price per gram is valid for today only. The gold rates change on day-to-day basis.</li>
-              <li style={{ marginBottom: '3px' }}>Deductions include processing fees, documentation charges and other charges.</li>
+              <li style={{ marginBottom: '3px' }}>The above gold price per gram is valid for today only. The gold rates change on day-to-day basis.Deductions include processing fees, documentation charges and other charges.</li>
               <li style={{ marginBottom: '3px' }}>All the disputes arising from this transaction shall be settled by binding arbitration within jurisdiction of Hyderabad, Telangana.</li>
             </ol>
           </div>
@@ -984,17 +999,17 @@ function PaymentPdfView({ userIdentifier, applicationId }) {
     const el = document.getElementById('pay-pdf-view')
     if (!el) return
     const w = window.open('','_blank')
-    w.document.write('<html><head><title>Payment Voucher</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:"Times New Roman",serif}@media print{@page{margin:10mm}}</style></head><body>' + el.innerHTML + '</body></html>')
+    w.document.write('<html><head><title>Payment Voucher</title><style>*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}body{font-family:"Times New Roman",serif}@media print{@page{margin:10mm}}div,table,td,th{background-clip:padding-box}</style></head><body>' + el.innerHTML + '</body></html>')
     w.document.close(); setTimeout(() => { w.print(); w.close() }, 400)
   }
 
   return (
     <div className="space-y-4">
-      <div id="pay-pdf-view" style={{ fontFamily: "'Times New Roman',Georgia,serif", maxWidth: '750px', margin: '0 auto', background: '#fff', border: '1px solid #ddd', borderRadius: '4px', overflow: 'hidden' }}>
+      <div id="pay-pdf-view" style={{ fontFamily: "'Times New Roman',Georgia,serif", maxWidth: '750px', margin: '0 auto', background: '#fff', border: '1px solid #ddd', borderRadius: '4px', overflow: 'hidden', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
 
         {/* Header */}
-        <div style={{ background: `linear-gradient(180deg, #3a7ab5, ${blue})`, padding: '18px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ color: '#fff', lineHeight: '1.5' }}>
+        <div style={{ backgroundColor: '#3a7ab5', backgroundImage: `linear-gradient(180deg, #3a7ab5, ${blue})`, padding: '18px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
+          <div style={{ color: '#fff', lineHeight: '1.5', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
             <div style={{ fontSize: '16px', fontWeight: 'bold' }}>SVS GOLD PRIVATE LIMITED</div>
             <div style={{ fontSize: '10px', opacity: .85 }}>{branchInfo?.full_address_txt}</div>
             <div style={{ fontSize: '10px', opacity: .85 }}>{branchInfo?.phone_number}</div>
@@ -1108,8 +1123,7 @@ function PaymentPdfView({ userIdentifier, applicationId }) {
             <ol style={{ fontSize: '9.5px', lineHeight: '1.8', paddingLeft: '16px', margin: 0 }}>
               <li style={{ marginBottom: '3px' }}>SVS Gold Private Limited (' SVS Gold') purchases the gold items based on the Customer's declaration that he/she is the only legal owner of the gold and is entitled to sell them.</li>
               <li style={{ marginBottom: '3px' }}>SVS Gold shall intimate the appropriate authorities in case it finds the Customer is trying to sell the stolen or counterfeit gold items.</li>
-              <li style={{ marginBottom: '3px' }}>Under any circumstance SVS Gold shall not return gold items brought from the customers.</li>
-              <li style={{ marginBottom: '3px' }}>Deductions include processing fees, documentation charges and other charges.</li>
+              <li style={{ marginBottom: '3px' }}>Under any circumstance SVS Gold shall not return gold items brought from the customers.Deductions include processing fees, documentation charges and other charges.</li>
               <li style={{ marginBottom: '3px' }}>All the disputes arising from this transaction shall be settled by binding arbitration within jurisdiction of Hyderabad, Telangana.</li>
             </ol>
           </div>

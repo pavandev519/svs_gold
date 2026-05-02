@@ -432,7 +432,7 @@ export default function PaymentPage() {
                 </div>
 
                 {/* ======== PAYMENT VOUCHER PDF REPLICA ======== */}
-                <div id="payment-voucher-print" style={{ fontFamily: "'Times New Roman',Georgia,serif", maxWidth: '750px', margin: '0 auto', background: '#fff', border: '1px solid #ddd', borderRadius: '4px', overflow: 'hidden' }}>
+                <div id="payment-voucher-print" className="voucher-content" style={{ fontFamily: "'Times New Roman',Georgia,serif", maxWidth: '750px', margin: '0 auto', background: '#fff', border: '1px solid #ddd', borderRadius: '4px', overflow: 'hidden' }}>
 
                   {/* Header */}
                   <div style={{ background: `linear-gradient(180deg, #3a7ab5, ${blue})`, padding: '18px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -531,8 +531,8 @@ export default function PaymentPage() {
                             <td style={{ ...vl, textAlign: 'center', fontWeight: 'bold' }}>₹{item.net_amount?.toLocaleString('en-IN')}</td>
                           </tr>
                         ))}
-                        {Array.from({ length: Math.max(0, 6 - invoiceItems.length) }).map((_, i) => (
-                          <tr key={`e${i}`}>{Array.from({length:9}).map((_,j) => <td key={j} style={{ ...vl, height: '24px' }}>&nbsp;</td>)}</tr>
+                        {Array.from({ length: Math.max(0, 5 - invoiceItems.length) }).map((_, i) => (
+                          <tr key={`e${i}`}>{Array.from({length:9}).map((_,j) => <td key={j} style={{ ...vl, height: '20px' }}>&nbsp;</td>)}</tr>
                         ))}
                         <tr>
                           <td colSpan={7} style={vl}></td>
@@ -571,20 +571,8 @@ export default function PaymentPage() {
                     </table>
                  
 
-                    {/* Terms & Conditions */}
-                    <div style={{ marginBottom: '16px' }}>
-                      <div style={{ fontSize: '12px', fontWeight: 'bold', color: blue, marginBottom: '6px' }}>Terms & Conditions</div>
-                      <ol style={{ fontSize: '9.5px', lineHeight: '1.7', paddingLeft: '16px', margin: 0 }}>
-                        <li style={{ marginBottom: '3px' }}>SVS Gold Private Limited (' SVS Gold') purchases the gold items based on the Customer's declaration that he/she is the only legal owner of the gold and is entitled to sell them.</li>
-                        <li style={{ marginBottom: '3px' }}>SVS Gold shall intimate the appropriate authorities in case it finds the Customer is trying to sell the stolen or counterfeit gold items.</li>
-                        <li style={{ marginBottom: '3px' }}>Under any circumstance SVS Gold shall not return gold items brought from the customers.</li>
-                        <li style={{ marginBottom: '3px' }}>Deductions include processing fees, documentation charges and other charges.</li>
-                        <li style={{ marginBottom: '3px' }}>All the disputes arising from this transaction shall be settled by binding arbitration within jurisdiction of Hyderabad, Telangana.</li>
-                      </ol>
-                    </div>
-
                     {/* Signatures */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: '30px', marginBottom: '10px' }}>
+                    <div className="signature-block" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: '16px', marginBottom: '10px', pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                       <div>
                         <div style={{ fontSize: '10px', color: '#555', marginBottom: '30px' }}>Authorised Signatory</div>
                         <table style={{ fontSize: '11px', borderCollapse: 'collapse' }}><tbody>
@@ -598,6 +586,17 @@ export default function PaymentPage() {
                         <div style={{ fontSize: '10px', color: '#555' }}>Customer Signature / Thumb Impression</div>
                       </div>
                     </div>
+
+                    {/* Terms & Conditions */}
+                    <div className="terms-page-break" style={{ display: 'block', pageBreakBefore: 'always', breakBefore: 'page', marginBottom: '16px' }}>
+                      <div style={{ fontSize: '12px', fontWeight: 'bold', color: blue, marginBottom: '6px' }}>Terms & Conditions</div>
+                      <ol style={{ fontSize: '9.5px', lineHeight: '1.7', paddingLeft: '16px', margin: 0 }}>
+                        <li style={{ marginBottom: '3px' }}>SVS Gold Private Limited (' SVS Gold') purchases the gold items based on the Customer's declaration that he/she is the only legal owner of the gold and is entitled to sell them.</li>
+                        <li style={{ marginBottom: '3px' }}>SVS Gold shall intimate the appropriate authorities in case it finds the Customer is trying to sell the stolen or counterfeit gold items.</li>
+                        <li style={{ marginBottom: '3px' }}>Under any circumstance SVS Gold shall not return gold items brought from the customers.Deductions include processing fees, documentation charges and other charges.</li>
+                        <li style={{ marginBottom: '3px' }}>All the disputes arising from this transaction shall be settled by binding arbitration within jurisdiction of Hyderabad, Telangana.</li>
+                      </ol>
+                    </div>
                   </div>
                 </div>
 
@@ -608,7 +607,7 @@ export default function PaymentPage() {
                       const el = document.getElementById('payment-voucher-print')
                       if (!el) return
                       const w = window.open('','_blank')
-                      w.document.write(`<html><head><title>Payment Voucher</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Times New Roman',serif;background:#fff}@media print{@page{margin:10mm}}</style></head><body>${el.innerHTML}</body></html>`)
+                      w.document.write(`<html><head><title>Payment Voucher</title><style>*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}html,body{background:#fff!important;color:#000!important;font-family:'Times New Roman',serif}body{padding:0;margin:0}@media print{.no-print{display:none!important}html,body{background:#fff!important;color:#000!important}body{margin:0;padding:0}@page{size:A4 portrait;margin:5mm}#payment-voucher-print{width:100%;max-width:100%;border:none;border-radius:0;box-shadow:none}#payment-voucher-print table{page-break-inside:auto}#payment-voucher-print tr{page-break-inside:avoid;page-break-after:auto;break-inside:avoid}#payment-voucher-print .signature-block{page-break-after:always;break-after:page;page-break-inside:avoid;break-inside:avoid!important;margin-top:16px}#payment-voucher-print .terms-page-break{display:block;page-break-before:always;break-before:page;page-break-after:auto;break-after:auto}#payment-voucher-print .footer-block{margin-bottom:0}}</style></head><body>${el.innerHTML}</body></html>`)
                       w.document.close(); setTimeout(() => { w.print(); w.close() }, 400)
                     }}
                     className="px-8 py-2.5 bg-white text-gray-700 font-medium rounded-xl shadow-sm border border-gray-200 flex items-center gap-2 text-sm hover:bg-gray-50"

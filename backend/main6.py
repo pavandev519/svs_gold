@@ -1000,23 +1000,42 @@ def create_application(payload: ApplicationCreateRequest):
 
 
 @app.get("/applications/by-user", response_model=ApplicationListResponse)
-def get_applications_by_user(mobile: str = Query(...)):
+def get_applications_by_user(
+    mobile: str = Query(...),
+    branch_name: str | None = Query(None)
+):
     conn = get_connection()
     cur = conn.cursor()
     try:
         account_id = get_account_id(cur, mobile)
-        cur.execute(
-            """
-            SELECT application_id, application_no,
-                   application_type, application_date,
-                   place, total_quantity,
-                   total_weight_gms, status, created_at
-            FROM gold_schema.applications
-            WHERE account_id = %s
-            ORDER BY created_at DESC
-            """,
-            (account_id,)
-        )
+        if branch_name:
+            branch_name = branch_name.strip()
+            cur.execute(
+                """
+                SELECT application_id, application_no,
+                       application_type, application_date,
+                       place, total_quantity,
+                       total_weight_gms, status, created_at
+                FROM gold_schema.applications
+                WHERE account_id = %s
+                  AND place = %s
+                ORDER BY created_at DESC
+                """,
+                (account_id, branch_name)
+            )
+        else:
+            cur.execute(
+                """
+                SELECT application_id, application_no,
+                       application_type, application_date,
+                       place, total_quantity,
+                       total_weight_gms, status, created_at
+                FROM gold_schema.applications
+                WHERE account_id = %s
+                ORDER BY created_at DESC
+                """,
+                (account_id,)
+            )
         rows = cur.fetchall()
         return {
             "mobile": mobile,
@@ -2494,13 +2513,37 @@ def get_transactions(
 
 
 @app.get("/estimations/by-user")
-def get_estimations_by_user(mobile: str = Query(...)):
+def get_estimations_by_user(
+    mobile: str = Query(...),
+    branch_name: str | None = Query(None)
+):
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     try:
         account_id = get_account_id(cur, mobile)
 
-        cur.execute("SELECT * FROM gold_schema.estimations WHERE account_id=%s ORDER BY estimation_date DESC", (account_id,))
+        if branch_name:
+            branch_name = branch_name.strip()
+            cur.execute(
+                """
+                SELECT e.*
+                FROM gold_schema.estimations e
+                LEFT JOIN gold_schema.estimation_application_map m
+                    ON e.estimation_id = m.estimation_id
+                LEFT JOIN gold_schema.applications a
+                    ON m.application_id = a.application_id
+                WHERE e.account_id = %s
+                  AND a.place = %s
+                ORDER BY e.estimation_date DESC
+                """,
+                (account_id, branch_name)
+            )
+        else:
+            cur.execute(
+                "SELECT * FROM gold_schema.estimations WHERE account_id=%s ORDER BY estimation_date DESC",
+                (account_id,)
+            )
+
         estimations = cur.fetchall()
 
         for est in estimations:
