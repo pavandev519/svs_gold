@@ -37,14 +37,22 @@ export default function EstimationPage() {
   // Fetch branch info based on application place
   useEffect(() => {
     if (!application) return
-    const place = (application?.application?.place || application?.place || '').toLowerCase().trim()
-    if (!place) return
     ;(async () => {
       try {
         const res = await applicationsAPI.getBranches()
         const branches = res.data?.branches || []
-        let matched = branches.find(b => b.branch_name.toLowerCase() === place)
-        if (!matched) matched = branches.find(b => b.branch_name.toLowerCase().includes(place) || place.includes(b.branch_name.toLowerCase()))
+        const normalize = (value) => (typeof value === 'string' ? value.toLowerCase().trim() : '')
+        const branchCandidate =
+          normalize(application?.application?.place) ||
+          normalize(application?.application?.branch) ||
+          normalize(application?.application?.branch_name) ||
+          normalize(application?.place) ||
+          normalize(application?.branch) ||
+          normalize(application?.branch_name)
+        if (!branchCandidate) return
+        let matched = branches.find(b => normalize(b.branch_name) === branchCandidate || normalize(b.branch_code) === branchCandidate)
+        if (!matched) matched = branches.find(b => normalize(b.branch_name).includes(branchCandidate) || branchCandidate.includes(normalize(b.branch_name)))
+        if (!matched) matched = branches.find(b => normalize(b.full_address_txt).includes(branchCandidate) || normalize(b.branch_address).includes(branchCandidate) || normalize(b.address).includes(branchCandidate))
         if (matched) setBranchInfo(matched)
       } catch {}
     })()
@@ -200,7 +208,21 @@ export default function EstimationPage() {
 
   const handleProceedToPayment = () => {
     if (!previewReady) return
-    navigate('/payment', { state: { application: previewData, estimation_no: estimationNo, items, grandTotal: finalAmount } })
+    const paymentBranchInfo = branchInfo || previewData?.branch_info || null
+    if (paymentBranchInfo) {
+      sessionStorage.setItem('svs_payment_branch_info', JSON.stringify(paymentBranchInfo))
+    }
+    navigate('/payment', {
+      state: {
+        application: {
+          ...previewData,
+          branch_info: paymentBranchInfo
+        },
+        estimation_no: estimationNo,
+        items,
+        grandTotal: finalAmount
+      }
+    })
   }
 
   const handleLogout = () => {
@@ -461,6 +483,15 @@ export default function EstimationPage() {
               const cb = '1px solid #6a9ec7'
               const lb = { border: cb, padding: '5px 8px', fontWeight: 'bold', background: '#f0f6fb', fontSize: '10px' }
               const vl = { border: cb, padding: '5px 8px', fontSize: '10px' }
+              const formatBranchAddress = (address) => {
+                if (!address) return ''
+                const parts = address.split(',').map(part => part.trim()).filter(Boolean)
+                if (parts.length <= 2) return address
+                return `${parts.slice(0, 2).join(', ')},\n${parts.slice(2).join(', ')}`
+              }
+              const branchAddress = branchInfo?.full_address_txt || branchInfo?.branch_address || branchInfo?.address || branchInfo?.address_text || branchInfo?.branch_name || application?.application?.place || application?.place || ''
+              const branchPhone = branchInfo?.phone_number || branchInfo?.phone || branchInfo?.contact_number || branchInfo?.contact || ''
+              const displayBranchAddress = formatBranchAddress(branchAddress)
 
               return (
               <div className="space-y-6">
@@ -485,18 +516,18 @@ export default function EstimationPage() {
                 <div id="estimation-print-area" style={{ fontFamily: "'Times New Roman',Georgia,serif", maxWidth: '750px', margin: '0 auto', background: '#fff', border: '1px solid #ddd', borderRadius: '4px', overflow: 'hidden' }}>
 
                   {/* Header */}
-                  <div className="estimation-header" style={{ backgroundColor: '#3a7ab5', backgroundImage: `linear-gradient(180deg, #3a7ab5, ${blue})`, padding: '18px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ color: '#fff', lineHeight: '1.5' }}>
-                      <div style={{ fontSize: '16px', fontWeight: 'bold' }}>SVS GOLD PRIVATE LIMITED</div>
-                      <div style={{ fontSize: '10px', opacity: .85 }}>{branchInfo?.full_address_txt}</div>
-                      <div style={{ fontSize: '10px', opacity: .85 }}>{branchInfo?.phone_number}</div>
-                      <div style={{ fontSize: '10px', opacity: .85 }}>www.svsgold.com</div>
+                  <div className="estimation-header" style={{ backgroundColor: '#3A3A8F', backgroundImage: 'linear-gradient(180deg, #3A3A8F, #2C2C6F)', padding: '18px 28px', position: 'relative', display: 'flex', alignItems: 'start', borderBottom: '4px solid #D4AF37', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
+                    <div style={{ color: '#F5E6C8', lineHeight: '1.3', fontSize: '9.5px', minWidth: 0, maxWidth: '240px', paddingRight: '18px', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
+                      <div style={{ fontSize: '14px', fontWeight: 'bold' }}>SVS GOLD PRIVATE LIMITED</div>
+                      {displayBranchAddress ? <div style={{ fontSize: '8px', opacity: .85, whiteSpace: 'pre-line', wordBreak: 'break-word' }}>{displayBranchAddress}</div> : null}
+                      {branchPhone ? <div style={{ fontSize: '8px', opacity: .85 }}>{branchPhone}</div> : null}
+                      <div style={{ fontSize: '8px', opacity: .85 }}>www.svsgold.com</div>
                     </div>
-                    <div style={{ textAlign: 'center', color: '#fff' }}>
-                      <div style={{ fontSize: '20px', fontWeight: 'bold', letterSpacing: '2px' }}>ESTIMATION COPY</div>
+                    <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center', color: '#F5E6C8', width: '100%', padding: '0 190px', pointerEvents: 'none', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', letterSpacing: '1px' }}>ESTIMATION COPY</div>
                     </div>
-                    <div style={{ width: '100px', height: '70px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS Gold" style={{ maxHeight: '65px', maxWidth: '95px', objectFit: 'contain' }} />
+                    <div style={{ width: '70px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginLeft: 'auto', flexShrink: 0 }}>
+                      <img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS Gold" style={{ maxHeight: '48px', maxWidth: '65px', objectFit: 'contain' }} />
                     </div>
                   </div>
 
@@ -640,7 +671,7 @@ export default function EstimationPage() {
                       const el = document.getElementById('estimation-print-area')
                       if (!el) return
                       const w = window.open('','_blank')
-                      w.document.write(`<html><head><title>Estimation</title><style>*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}html,body{background:#fff!important;color:#000!important;font-family:'Times New Roman',serif}body{padding:0;margin:0}@media print{.no-print{display:none!important}html,body{background:#fff!important;color:#000!important}body{margin:0;padding:0}@page{margin:10mm}#estimation-print-area .estimation-header{background-color:#3a7ab5!important;background-image:none!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}#estimation-print-area .estimation-header, #estimation-print-area .estimation-header *{color:#fff!important} }div,table,td,th{background-clip:padding-box}</style></head><body>${el.innerHTML}</body></html>`)
+                      w.document.write(`<html><head><title>Estimation</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Times New Roman',serif;background:#fff}@media print{@page{margin:10mm}}</style></head><body>${el.innerHTML}</body></html>`)
                       w.document.close(); setTimeout(() => { w.print(); w.close() }, 400)
                     }}
                     className="px-6 py-2.5 flex items-center gap-2 bg-white text-gray-700 font-medium rounded-xl shadow-sm border border-gray-200 transition-all hover:bg-gray-50 text-sm"

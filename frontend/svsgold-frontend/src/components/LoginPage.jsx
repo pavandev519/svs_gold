@@ -111,7 +111,7 @@ export default function LoginPage({ onLoginSuccess }) {
         <div className="relative z-10 w-full h-full flex flex-col justify-center items-center p-12">
           <div className="space-y-6 text-center w-full">
             <div>
-              <img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS Gold" className="mx-auto mb-4 drop-shadow-lg" style={{ width: '350px' }} />
+              <img src={import.meta.env.BASE_URL + 'svs_final.png'} alt="SVS Gold" className="mx-auto mb-4 drop-shadow-lg" style={{ width: '350px' }} />
             </div>
             <p className="text-lg max-w-md mx-auto leading-relaxed" style={{ color: '#6e4816' }}>
               Manage your accounts with elegance and efficiency

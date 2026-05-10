@@ -166,6 +166,13 @@ export default function ApplicationPreview({ application, userIdentifier, onBack
 
   const branchAddress = branchInfo?.full_address_txt || branchInfo?.branch_address || branchInfo?.address || branchInfo?.address_text || branchInfo?.branch_name || app.place || app.branch || ''
   const branchPhone = branchInfo?.phone_number || branchInfo?.phone || branchInfo?.contact_number || branchInfo?.contact || ''
+  const formatBranchAddress = (address) => {
+    if (!address) return ''
+    const parts = address.split(',').map(part => part.trim()).filter(Boolean)
+    if (parts.length <= 2) return address
+    return `${parts.slice(0, 2).join(', ')},\n${parts.slice(2).join(', ')}`
+  }
+  const displayBranchAddress = formatBranchAddress(branchAddress)
 
   const formatAddress = (a) => {
     if (typeof a === 'string') return a
@@ -226,17 +233,17 @@ export default function ApplicationPreview({ application, userIdentifier, onBack
         <div style={{ fontFamily: "'Times New Roman',Georgia,serif", maxWidth: '750px', margin: '0 auto', background: '#fff', border: '1px solid #ddd', borderRadius: '4px', overflow: 'hidden', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
 
           {/* HEADER */}
-          <div style={{ backgroundColor: '#3a7ab5', backgroundImage: 'linear-gradient(180deg, #3a7ab5, #2c5f8a)', padding: '18px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
-            <div style={{ color: '#fff', lineHeight: '1.3', fontSize: '9.5px', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
+          <div style={{ backgroundColor: '#3A3A8F', backgroundImage: 'linear-gradient(180deg, #3A3A8F, #2C2C6F)', padding: '18px 28px', position: 'relative', display: 'flex', alignItems: 'start', borderBottom: '4px solid #D4AF37', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
+            <div style={{ color: '#F5E6C8', lineHeight: '1.3', fontSize: '9.5px', minWidth: 0, maxWidth: '240px', paddingRight: '18px', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
               <div style={{ fontSize: '14px', fontWeight: 'bold' }}>SVS GOLD PRIVATE LIMITED</div>
-              {branchAddress ? <div style={{ fontSize: '8px', opacity: .85 }}>{branchAddress}</div> : null}
+              {displayBranchAddress ? <div style={{ fontSize: '8px', opacity: .85, whiteSpace: 'pre-line', wordBreak: 'break-word' }}>{displayBranchAddress}</div> : null}
               {branchPhone ? <div style={{ fontSize: '8px', opacity: .85 }}>{branchPhone}</div> : null}
               <div style={{ fontSize: '8px', opacity: .85 }}>www.svsgold.com</div>
             </div>
-            <div style={{ textAlign: 'center', color: '#fff' }}>
+            <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center', color: '#F5E6C8', width: '100%', padding: '0 190px', pointerEvents: 'none' }}>
               <div style={{ fontSize: '18px', fontWeight: 'bold', letterSpacing: '1px' }}>APPLICATION FORM</div>
             </div>
-            <div style={{ width: '70px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: '70px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginLeft: 'auto', flexShrink: 0 }}>
               <img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS Gold" style={{ maxHeight: '48px', maxWidth: '65px', objectFit: 'contain' }} />
             </div>
           </div>

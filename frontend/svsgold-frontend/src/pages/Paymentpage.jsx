@@ -11,6 +11,13 @@ export default function PaymentPage() {
   const location = useLocation()
   const navigate = useNavigate()
   const appData = location.state?.application
+  const storedBranchInfo = (() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('svs_payment_branch_info') || 'null')
+    } catch {
+      return null
+    }
+  })()
   const estimationItems = location.state?.items || []
   const estimationTotal = location.state?.grandTotal || 0
 
@@ -18,18 +25,34 @@ export default function PaymentPage() {
   const loggedInMobile = localStorage.getItem('user_mobile') || storedLogin?.mobile || ''
 
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [branchInfo, setBranchInfo] = useState(null)
+  const [branchInfo, setBranchInfo] = useState(appData?.branch_info || storedBranchInfo || null)
 
   // Fetch branch info
   useEffect(() => {
-    const place = (appData?.application?.place || '').toLowerCase().trim()
-    if (!place) return
     ;(async () => {
       try {
         const res = await applicationsAPI.getBranches()
         const branches = res.data?.branches || []
-        let matched = branches.find(b => b.branch_name.toLowerCase() === place)
-        if (!matched) matched = branches.find(b => b.branch_name.toLowerCase().includes(place) || place.includes(b.branch_name.toLowerCase()))
+        const normalize = (value) => (typeof value === 'string' ? value.toLowerCase().trim() : '')
+        const branchCandidate =
+          normalize(appData?.application?.place) ||
+          normalize(appData?.application?.branch) ||
+          normalize(appData?.application?.branch_name) ||
+          normalize(appData?.branch_info?.branch_name) ||
+          normalize(appData?.branch_info?.branch_code) ||
+          normalize(appData?.branch_info?.full_address_txt) ||
+          normalize(storedBranchInfo?.branch_name) ||
+          normalize(storedBranchInfo?.branch_code) ||
+          normalize(storedBranchInfo?.full_address_txt) ||
+          normalize(appData?.pledge_details?.branch_name) ||
+          normalize(appData?._appPledge?.branch_name) ||
+          normalize(appData?.place) ||
+          normalize(appData?.branch) ||
+          normalize(appData?.branch_name)
+        if (!branchCandidate) return
+        let matched = branches.find(b => normalize(b.branch_name) === branchCandidate || normalize(b.branch_code) === branchCandidate)
+        if (!matched) matched = branches.find(b => normalize(b.branch_name).includes(branchCandidate) || branchCandidate.includes(normalize(b.branch_name)))
+        if (!matched) matched = branches.find(b => normalize(b.full_address_txt).includes(branchCandidate) || normalize(b.branch_address).includes(branchCandidate) || normalize(b.address).includes(branchCandidate))
         if (matched) setBranchInfo(matched)
       } catch {}
     })()
@@ -405,17 +428,83 @@ export default function PaymentPage() {
 
             {/* Complete — Payment Voucher PDF Preview */}
             {allComplete && (() => {
-              const acc = appData?.account || {}
+              const acc = appData?.account || appData?.customer || {}
               const addrs = appData?.addresses || []
               const docs = appData?.documents || []
               const appInfo = appData?.application || {}
               const custName = acc.name || [acc.first_name, acc.last_name].filter(Boolean).join(' ') || ''
-              const presentA = addrs.find(a => /present|current/i.test(a.address_type)) || addrs[0] || {}
-              const permA = addrs.find(a => /permanent/i.test(a.address_type)) || addrs[1] || presentA
-              const fmtA = (a) => [a?.address_line, a?.street, a?.city, a?.state, a?.pincode].filter(Boolean).join(', ')
+              const accountAddressFallback = acc.address_text || [acc.address_line, acc.street, acc.city, acc.district, acc.state, acc.pincode, acc.country].filter(Boolean).join(', ')
+              const normalizeAddress = (addr) => {
+                if (!addr || typeof addr !== 'object') return null
+                return {
+                  ...addr,
+                  address_type: addr.address_type || addr.type || '',
+                  address_text: addr.address_text || addr.full_address || addr.address || '',
+                  address_line: addr.address_line || addr.line1 || addr.line || ''
+                }
+              }
+              const normalizedAddresses = addrs.map(normalizeAddress).filter(Boolean)
+              const findAddress = (pattern) => normalizedAddresses.find(a => pattern.test(`${a.address_type || ''} ${a.address_text || ''}`))
+              const presentA = findAddress(/present|current|residential/i) || normalizedAddresses[0] || appInfo.present_address || appInfo.address_text || acc.address_text || null
+              const permA = findAddress(/permanent/i) || normalizedAddresses[1] || appInfo.permanent_address || appInfo.address_text || acc.address_text || presentA
+              const fmtA = (a) => {
+                if (typeof a === 'string') return a
+                if (!a) return accountAddressFallback || ''
+                const parts = []
+                if (a.address_text) {
+                  parts.push(a.address_text)
+                } else {
+                  parts.push(a.address_line, a.street, a.city, a.district, a.state, a.pincode, a.country)
+                }
+                return parts.filter(Boolean).join(', ')
+              }
               const calcAge = (d) => { if (!d) return ''; const b = new Date(d), t = new Date(); let a = t.getFullYear() - b.getFullYear(); if (t.getMonth() < b.getMonth() || (t.getMonth() === b.getMonth() && t.getDate() < b.getDate())) a--; return a }
               const photoDoc = docs.find(d => /photo/i.test(d.document_type || ''))
               const photoUrl = acc.photo_url || photoDoc?.file_path || ''
+              const formatBranchAddress = (address) => {
+                if (!address) return ''
+                const parts = address.split(',').map(part => part.trim()).filter(Boolean)
+                if (parts.length <= 2) return address
+                return `${parts.slice(0, 2).join(', ')},\n${parts.slice(2).join(', ')}`
+              }
+              //const displayBranchAddress = formatBranchAddress(branchAddress)
+              const branchAddress =
+                branchInfo?.full_address_txt ||
+                branchInfo?.branch_address ||
+                branchInfo?.address ||
+                branchInfo?.address_text ||
+                appData?.branch_info?.full_address_txt ||
+                appData?.branch_info?.branch_address ||
+                appData?.branch_info?.address ||
+                appData?.branch_info?.address_text ||
+                appData?.pledge_details?.branch_address ||
+                appData?.pledge_details?.address ||
+                appData?._appPledge?.branch_address ||
+                appData?._appPledge?.address ||
+                branchInfo?.branch_name ||
+                appData?.branch_info?.branch_name ||
+                appData?.pledge_details?.branch_name ||
+                appData?._appPledge?.branch_name ||
+                appInfo.place ||
+                appInfo.branch ||
+                ''
+              const displayBranchAddress = formatBranchAddress(branchAddress)
+              const branchPhone =
+                branchInfo?.phone_number ||
+                branchInfo?.phone ||
+                branchInfo?.contact_number ||
+                branchInfo?.contact ||
+                appData?.branch_info?.phone_number ||
+                appData?.branch_info?.phone ||
+                appData?.branch_info?.contact_number ||
+                appData?.branch_info?.contact ||
+                appData?.pledge_details?.phone_number ||
+                appData?.pledge_details?.phone ||
+                appData?.pledge_details?.contact_number ||
+                appData?._appPledge?.phone_number ||
+                appData?._appPledge?.phone ||
+                appData?._appPledge?.contact_number ||
+                ''
 
               const totalNet = invoiceItems.reduce((s, it) => s + (parseFloat(it.net_amount) || 0), 0)
               const blue = '#2c5f8a'
@@ -432,25 +521,25 @@ export default function PaymentPage() {
                 </div>
 
                 {/* ======== PAYMENT VOUCHER PDF REPLICA ======== */}
-                <div id="payment-voucher-print" className="voucher-content" style={{ fontFamily: "'Times New Roman',Georgia,serif", maxWidth: '750px', margin: '0 auto', background: '#fff', border: '1px solid #ddd', borderRadius: '4px', overflow: 'hidden' }}>
+                <div id="payment-voucher-print" style={{ fontFamily: "'Times New Roman',Georgia,serif", maxWidth: '750px', margin: '0 auto', background: '#fff', border: '1px solid #ddd', borderRadius: '4px', overflow: 'hidden', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
 
                   {/* Header */}
-                  <div style={{ background: `linear-gradient(180deg, #3a7ab5, ${blue})`, padding: '18px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ color: '#fff', lineHeight: '1.5' }}>
-                      <div style={{ fontSize: '16px', fontWeight: 'bold' }}>SVS GOLD PRIVATE LIMITED</div>
-                      <div style={{ fontSize: '10px', opacity: .85 }}>{branchInfo?.full_address_txt}</div>
-                      <div style={{ fontSize: '10px', opacity: .85 }}>{branchInfo?.phone_number}</div>
-                      <div style={{ fontSize: '10px', opacity: .85 }}>www.svsgold.com</div>
-                    </div>
-                    <div style={{ textAlign: 'center', color: '#fff' }}>
-                      <div style={{ fontSize: '20px', fontWeight: 'bold', letterSpacing: '2px' }}>PAYMENT VOUCHER</div>
-                    </div>
-                    <div style={{ width: '100px', height: '70px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS Gold" style={{ maxHeight: '65px', maxWidth: '95px', objectFit: 'contain' }} />
-                    </div>
-                  </div>
+           <div style={{ backgroundColor: '#3A3A8F', backgroundImage: 'linear-gradient(180deg, #3A3A8F, #2C2C6F)', padding: '18px 28px', position: 'relative', display: 'flex', alignItems: 'start', borderBottom: '4px solid #D4AF37', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
+            <div style={{ color: '#F5E6C8', lineHeight: '1.3', fontSize: '9.5px', minWidth: 0, maxWidth: '240px', paddingRight: '18px', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
+              <div style={{ fontSize: '14px', fontWeight: 'bold' }}>SVS GOLD PRIVATE LIMITED</div>
+              {displayBranchAddress ? <div style={{ fontSize: '8px', opacity: .85, whiteSpace: 'pre-line', wordBreak: 'break-word' }}>{displayBranchAddress}</div> : null}
+              {branchPhone ? <div style={{ fontSize: '8px', opacity: .85 }}>{branchPhone}</div> : null}
+              <div style={{ fontSize: '8px', opacity: .85 }}>www.svsgold.com</div>
+            </div>
+            <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center', color: '#F5E6C8', width: '100%', padding: '0 190px', pointerEvents: 'none' }}>
+              <div style={{ fontSize: '18px', fontWeight: 'bold', letterSpacing: '1px' }}>PAYMENT VOUCHER</div>
+            </div>
+            <div style={{ width: '70px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginLeft: 'auto', flexShrink: 0 }}>
+              <img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS Gold" style={{ maxHeight: '48px', maxWidth: '65px', objectFit: 'contain' }} />
+            </div>
+          </div>
 
-                  <div style={{ padding: '20px 28px' }}>
+          <div style={{ padding: '14px 20px' }}>
                     {/* Bill No / Application No */}
                     <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '12px' }}>
                       <tbody>
@@ -531,8 +620,8 @@ export default function PaymentPage() {
                             <td style={{ ...vl, textAlign: 'center', fontWeight: 'bold' }}>₹{item.net_amount?.toLocaleString('en-IN')}</td>
                           </tr>
                         ))}
-                        {Array.from({ length: Math.max(0, 5 - invoiceItems.length) }).map((_, i) => (
-                          <tr key={`e${i}`}>{Array.from({length:9}).map((_,j) => <td key={j} style={{ ...vl, height: '20px' }}>&nbsp;</td>)}</tr>
+                        {Array.from({ length: Math.max(0, 6 - invoiceItems.length) }).map((_, i) => (
+                          <tr key={`e${i}`}>{Array.from({length:9}).map((_,j) => <td key={j} style={{ ...vl, height: '24px' }}>&nbsp;</td>)}</tr>
                         ))}
                         <tr>
                           <td colSpan={7} style={vl}></td>
@@ -571,8 +660,20 @@ export default function PaymentPage() {
                     </table>
                  
 
+                    {/* Terms & Conditions */}
+                    <div style={{ marginBottom: '16px' }}>
+                      <div style={{ fontSize: '12px', fontWeight: 'bold', color: blue, marginBottom: '6px' }}>Terms & Conditions</div>
+                      <ol style={{ fontSize: '9.5px', lineHeight: '1.7', paddingLeft: '16px', margin: 0 }}>
+                        <li style={{ marginBottom: '3px' }}>SVS Gold Private Limited (' SVS Gold') purchases the gold items based on the Customer's declaration that he/she is the only legal owner of the gold and is entitled to sell them.</li>
+                        <li style={{ marginBottom: '3px' }}>SVS Gold shall intimate the appropriate authorities in case it finds the Customer is trying to sell the stolen or counterfeit gold items.</li>
+                        <li style={{ marginBottom: '3px' }}>Under any circumstance SVS Gold shall not return gold items brought from the customers.</li>
+                        <li style={{ marginBottom: '3px' }}>Deductions include processing fees, documentation charges and other charges.</li>
+                        <li style={{ marginBottom: '3px' }}>All the disputes arising from this transaction shall be settled by binding arbitration within jurisdiction of Hyderabad, Telangana.</li>
+                      </ol>
+                    </div>
+
                     {/* Signatures */}
-                    <div className="signature-block" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: '16px', marginBottom: '10px', pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: '30px', marginBottom: '10px' }}>
                       <div>
                         <div style={{ fontSize: '10px', color: '#555', marginBottom: '30px' }}>Authorised Signatory</div>
                         <table style={{ fontSize: '11px', borderCollapse: 'collapse' }}><tbody>
@@ -586,17 +687,6 @@ export default function PaymentPage() {
                         <div style={{ fontSize: '10px', color: '#555' }}>Customer Signature / Thumb Impression</div>
                       </div>
                     </div>
-
-                    {/* Terms & Conditions */}
-                    <div className="terms-page-break" style={{ display: 'block', pageBreakBefore: 'always', breakBefore: 'page', marginBottom: '16px' }}>
-                      <div style={{ fontSize: '12px', fontWeight: 'bold', color: blue, marginBottom: '6px' }}>Terms & Conditions</div>
-                      <ol style={{ fontSize: '9.5px', lineHeight: '1.7', paddingLeft: '16px', margin: 0 }}>
-                        <li style={{ marginBottom: '3px' }}>SVS Gold Private Limited (' SVS Gold') purchases the gold items based on the Customer's declaration that he/she is the only legal owner of the gold and is entitled to sell them.</li>
-                        <li style={{ marginBottom: '3px' }}>SVS Gold shall intimate the appropriate authorities in case it finds the Customer is trying to sell the stolen or counterfeit gold items.</li>
-                        <li style={{ marginBottom: '3px' }}>Under any circumstance SVS Gold shall not return gold items brought from the customers.Deductions include processing fees, documentation charges and other charges.</li>
-                        <li style={{ marginBottom: '3px' }}>All the disputes arising from this transaction shall be settled by binding arbitration within jurisdiction of Hyderabad, Telangana.</li>
-                      </ol>
-                    </div>
                   </div>
                 </div>
 
@@ -607,7 +697,7 @@ export default function PaymentPage() {
                       const el = document.getElementById('payment-voucher-print')
                       if (!el) return
                       const w = window.open('','_blank')
-                      w.document.write(`<html><head><title>Payment Voucher</title><style>*{margin:0;padding:0;box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}html,body{background:#fff!important;color:#000!important;font-family:'Times New Roman',serif}body{padding:0;margin:0}@media print{.no-print{display:none!important}html,body{background:#fff!important;color:#000!important}body{margin:0;padding:0}@page{size:A4 portrait;margin:5mm}#payment-voucher-print{width:100%;max-width:100%;border:none;border-radius:0;box-shadow:none}#payment-voucher-print table{page-break-inside:auto}#payment-voucher-print tr{page-break-inside:avoid;page-break-after:auto;break-inside:avoid}#payment-voucher-print .signature-block{page-break-after:always;break-after:page;page-break-inside:avoid;break-inside:avoid!important;margin-top:16px}#payment-voucher-print .terms-page-break{display:block;page-break-before:always;break-before:page;page-break-after:auto;break-after:auto}#payment-voucher-print .footer-block{margin-bottom:0}}</style></head><body>${el.innerHTML}</body></html>`)
+                      w.document.write(`<html><head><title>Payment Voucher</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Times New Roman',serif;background:#fff}@media print{@page{margin:10mm}}</style></head><body>${el.innerHTML}</body></html>`)
                       w.document.close(); setTimeout(() => { w.print(); w.close() }, 400)
                     }}
                     className="px-8 py-2.5 bg-white text-gray-700 font-medium rounded-xl shadow-sm border border-gray-200 flex items-center gap-2 text-sm hover:bg-gray-50"

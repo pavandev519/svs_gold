@@ -130,25 +130,26 @@ export default function InvoicePreviewPage() {
             boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
           }}>
 
-            {/* ---- Green Header ---- */}
+            {/* ---- Blue Header ---- */}
             <div style={{
-              background: 'linear-gradient(135deg, #c9943a, #a36e24)',
+              background: 'linear-gradient(135deg, #3A3A8F, #2C2C6F)',
               padding: '36px 40px',
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'flex-start',
+              borderBottom: '4px solid #D4AF37'
             }}>
               <div>
                 <div style={{ fontSize: '36px', fontWeight: '700', color: '#fff', letterSpacing: '-1px' }}>
                   Invoice
                 </div>
-                <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: '13px', marginTop: '6px' }}>
+                <div style={{ color: 'rgba(245,230,200,0.85)', fontSize: '13px', marginTop: '6px' }}>
                   {invoice.invoice_no}
                 </div>
               </div>
               <div style={{ textAlign: 'right', color: '#fff' }}>
                 <div style={{ fontWeight: '700', fontSize: '18px' }}>SVS GOLD</div>
-                <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.8)', marginTop: '4px', lineHeight: '1.5' }}>
+                <div style={{ fontSize: '12px', color: 'rgba(245,230,200,0.85)', marginTop: '4px', lineHeight: '1.5' }}>
                   3-4-659/3, YMCA, Narayanguda<br />
                   Himayathnagar, Hyderabad - 29<br />
                   98855 88220 • www.svsgold.com

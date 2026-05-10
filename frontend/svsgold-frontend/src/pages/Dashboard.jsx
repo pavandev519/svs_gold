@@ -335,8 +335,8 @@ export default function Dashboard({ loginData, onLogout }) {
           {/* Logo */}
           <div className="p-4 flex items-center justify-between" style={{ borderBottom: '1px solid rgba(255,255,255,0.15)' }}>
             <div className={`flex items-center gap-3 ${!sidebarOpen && 'justify-center w-full'}`}>
-              <div className="w-14 h-14 rounded-2xl flex items-center justify-center overflow-hidden shadow-md" style={{ background: 'rgba(255,255,255,0.18)' }}>
-                <img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS Gold" className="w-10 h-10 object-contain" />
+              <div className="w-14 h-14 rounded-2xl flex items-center justify-center overflow-hidden shadow-md" style={{ background: 'rgba(247, 247, 247, 0.18)' }}>
+                <img src={import.meta.env.BASE_URL + 'svslogo-white_new.png'} alt="SVS Gold" className="w-10 h-10 object-contain" />
               </div>
               {sidebarOpen && <span className="font-bold text-xl tracking-wide">SVS Gold</span>}
             </div>

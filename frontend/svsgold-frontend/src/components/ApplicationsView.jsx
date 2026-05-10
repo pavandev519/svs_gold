@@ -781,6 +781,14 @@ function EstimationPdfView({ userIdentifier, applicationId }) {
   const totalDue = parseFloat(pledge.total_due) || 0
   const isPR = data?.application?.application_type === 'PLEDGE_RELEASE'
   const finalAmount = isPR ? totalNet - totalDue : totalNet
+  const formatBranchAddress = (address) => {
+    if (!address) return ''
+    const parts = address.split(',').map(part => part.trim()).filter(Boolean)
+    if (parts.length <= 3) return address
+    return `${parts.slice(0, 3).join(', ')},\n${parts.slice(3).join(', ')}`
+  }
+  const displayBranchAddress = formatBranchAddress(branchInfo?.full_address_txt || branchInfo?.branch_address || branchInfo?.address || '')
+  const branchPhone = branchInfo?.phone_number || branchInfo?.phone || branchInfo?.contact_number || branchInfo?.contact || ''
 
   const numToWords = (n) => {
     if (!n || n === 0) return 'Zero'
@@ -811,20 +819,24 @@ function EstimationPdfView({ userIdentifier, applicationId }) {
 
   return (
     <div className="space-y-4">
-      <div id="est-pdf-view" style={{ fontFamily: "'Times New Roman',Georgia,serif", maxWidth: '750px', margin: '0 auto', background: '#fff', border: '1px solid #ddd', borderRadius: '4px', overflow: 'hidden' }}>
+      <div id="est-pdf-view" style={{ fontFamily: "'Times New Roman',Georgia,serif", maxWidth: '750px', margin: '0 auto', background: '#fff', border: '1px solid #ddd', borderRadius: '4px', overflow: 'hidden', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
         {/* Header */}
-        <div style={{ background: `linear-gradient(180deg, #3a7ab5, ${blue})`, padding: '18px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ color: '#fff', lineHeight: '1.5' }}>
-            <div style={{ fontSize: '16px', fontWeight: 'bold' }}>SVS GOLD PRIVATE LIMITED</div>
-            <div style={{ fontSize: '10px', opacity: .85 }}>{branchInfo?.full_address_txt}</div>
-            <div style={{ fontSize: '10px', opacity: .85 }}>{branchInfo?.phone_number}</div>
-            <div style={{ fontSize: '10px', opacity: .85 }}>www.svsgold.com</div>
+          <div style={{ backgroundColor: '#3A3A8F', backgroundImage: 'linear-gradient(180deg, #3A3A8F, #2C2C6F)', padding: '18px 28px', position: 'relative', display: 'flex', alignItems: 'start', borderBottom: '4px solid #D4AF37', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
+            <div style={{ color: '#F5E6C8', lineHeight: '1.3', fontSize: '9.5px', minWidth: 0, maxWidth: '240px', paddingRight: '18px', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
+              <div style={{ fontSize: '14px', fontWeight: 'bold' }}>SVS GOLD PRIVATE LIMITED</div>
+              {displayBranchAddress ? <div style={{ fontSize: '8px', opacity: .85, whiteSpace: 'pre-line', wordBreak: 'break-word' }}>{displayBranchAddress}</div> : null}
+              {branchPhone ? <div style={{ fontSize: '8px', opacity: .85 }}>{branchPhone}</div> : null}
+              <div style={{ fontSize: '8px', opacity: .85 }}>www.svsgold.com</div>
+            </div>
+            <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center', color: '#F5E6C8', width: '100%', padding: '0 190px', pointerEvents: 'none' }}>
+              <div style={{ fontSize: '18px', fontWeight: 'bold', letterSpacing: '1px' }}>ESTIMATION FORM</div>
+            </div>
+            <div style={{ width: '70px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginLeft: 'auto', flexShrink: 0 }}>
+              <img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS Gold" style={{ maxHeight: '48px', maxWidth: '65px', objectFit: 'contain' }} />
+            </div>
           </div>
-          <div style={{ textAlign: 'center', color: '#fff' }}><div style={{ fontSize: '20px', fontWeight: 'bold', letterSpacing: '2px' }}>ESTIMATION COPY</div></div>
-          <div style={{ width: '150px', height: '100px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS Gold" style={{ maxHeight: '65px', maxWidth: '95px', objectFit: 'contain' }} /></div>
-        </div>
 
-        <div style={{ padding: '20px 28px' }}>
+          <div style={{ padding: '14px 20px' }}>
           {/* Customer Details */}
           <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '14px' }}><tbody>
             <tr><td style={lb} width="130">Estimation No.</td><td style={vl}>{est.estimation_no || est.summary?.estimation_no || '—'}</td><td style={lb} width="60">Date</td><td style={vl} width="120">{formatDate(new Date())}</td><td style={{ border: cb, padding: '4px', textAlign: 'center', verticalAlign: 'top', width: '90px' }} rowSpan={5}>{photoUrl ? (<img src={photoUrl} alt="Customer" style={{ width: '80px', height: '95px', objectFit: 'cover', borderRadius: '2px' }} />) : (<div style={{ width: '80px', height: '95px', background: '#f0f6fb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', color: '#999', border: '1px dashed #bbb', margin: '0 auto' }}>Photo</div>)}</td></tr>
@@ -977,6 +989,14 @@ function PaymentPdfView({ userIdentifier, applicationId }) {
   const pledgeDue = parseFloat(appPledge?.total_due || 0)
   const isPR = app.application_type === 'PLEDGE_RELEASE'
   const payableAmount = Math.round((totalNet - pledgeDue) * 100) / 100
+  const formatBranchAddress = (address) => {
+    if (!address) return ''
+    const parts = address.split(',').map(part => part.trim()).filter(Boolean)
+    if (parts.length <= 3) return address
+    return `${parts.slice(0, 3).join(', ')},\n${parts.slice(3).join(', ')}`
+  }
+  const displayBranchAddress = formatBranchAddress(branchInfo?.full_address_txt || branchInfo?.branch_address || branchInfo?.address || '')
+  const branchPhone = branchInfo?.phone_number || branchInfo?.phone || branchInfo?.contact_number || branchInfo?.contact || ''
 
   const numToWords = (n) => {
     if (!n || n === 0) return 'Zero'
@@ -1008,18 +1028,22 @@ function PaymentPdfView({ userIdentifier, applicationId }) {
       <div id="pay-pdf-view" style={{ fontFamily: "'Times New Roman',Georgia,serif", maxWidth: '750px', margin: '0 auto', background: '#fff', border: '1px solid #ddd', borderRadius: '4px', overflow: 'hidden', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
 
         {/* Header */}
-        <div style={{ backgroundColor: '#3a7ab5', backgroundImage: `linear-gradient(180deg, #3a7ab5, ${blue})`, padding: '18px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
-          <div style={{ color: '#fff', lineHeight: '1.5', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
-            <div style={{ fontSize: '16px', fontWeight: 'bold' }}>SVS GOLD PRIVATE LIMITED</div>
-            <div style={{ fontSize: '10px', opacity: .85 }}>{branchInfo?.full_address_txt}</div>
-            <div style={{ fontSize: '10px', opacity: .85 }}>{branchInfo?.phone_number}</div>
-            <div style={{ fontSize: '10px', opacity: .85 }}>www.svsgold.com</div>
+          <div style={{ backgroundColor: '#3A3A8F', backgroundImage: 'linear-gradient(180deg, #3A3A8F, #2C2C6F)', padding: '18px 28px', position: 'relative', display: 'flex', alignItems: 'start', borderBottom: '4px solid #D4AF37', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
+            <div style={{ color: '#F5E6C8', lineHeight: '1.3', fontSize: '9.5px', minWidth: 0, maxWidth: '240px', paddingRight: '18px', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
+              <div style={{ fontSize: '14px', fontWeight: 'bold' }}>SVS GOLD PRIVATE LIMITED</div>
+              {displayBranchAddress ? <div style={{ fontSize: '8px', opacity: .85, whiteSpace: 'pre-line', wordBreak: 'break-word' }}>{displayBranchAddress}</div> : null}
+              {branchPhone ? <div style={{ fontSize: '8px', opacity: .85 }}>{branchPhone}</div> : null}
+              <div style={{ fontSize: '8px', opacity: .85 }}>www.svsgold.com</div>
+            </div>
+            <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center', color: '#F5E6C8', width: '100%', padding: '0 190px', pointerEvents: 'none' }}>
+              <div style={{ fontSize: '18px', fontWeight: 'bold', letterSpacing: '1px' }}>PAYMENT VOUCHER</div>
+            </div>
+            <div style={{ width: '70px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginLeft: 'auto', flexShrink: 0 }}>
+              <img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS Gold" style={{ maxHeight: '48px', maxWidth: '65px', objectFit: 'contain' }} />
+            </div>
           </div>
-          <div style={{ textAlign: 'center', color: '#fff' }}><div style={{ fontSize: '20px', fontWeight: 'bold', letterSpacing: '2px' }}>PAYMENT VOUCHER</div></div>
-          <div style={{ width: '100px', height: '70px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><img src={import.meta.env.BASE_URL + 'svslogo-white.png'} alt="SVS Gold" style={{ maxHeight: '65px', maxWidth: '95px', objectFit: 'contain' }} /></div>
-        </div>
 
-        <div style={{ padding: '20px 28px' }}>
+          <div style={{ padding: '14px 20px' }}>
 
           {/* Bill No / Application No */}
           <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '14px' }}><tbody>
