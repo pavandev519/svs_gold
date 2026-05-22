@@ -140,6 +140,25 @@ export const applicationsAPI = {
   
 }
 
+export const enquiriesAPI = {
+  createEnquiry: (data) => api.post('/enquiries/create', data),
+  getByMobile: (mobile) => api.get(`/enquiries/by-mobile?mobile=${encodeURIComponent(mobile)}`),
+  getByDate: ({ dateFrom, dateTo, enquiryType, branch, mobile, followUpDate, leadState, leadStatus, leadStage, sortOrder }) => {
+    const params = new URLSearchParams()
+    if (dateFrom) params.set('date_from', dateFrom)
+    if (dateTo) params.set('date_to', dateTo)
+    if (enquiryType) params.set('enquiry_type', enquiryType)
+    if (branch) params.set('branch', branch)
+    if (mobile) params.set('mobile', mobile)
+    if (followUpDate) params.set('follow_up_date', followUpDate)
+    if (leadState) params.set('lead_state', leadState)
+    if (leadStatus) params.set('lead_status', leadStatus)
+    if (leadStage) params.set('lead_stage', leadStage)
+    if (sortOrder) params.set('sort_order', sortOrder)
+    return api.get(`/enquiries/by-date?${params.toString()}`)
+  }
+}
+
 export const paymentsAPI = {
   createInvoice: (data) => api.post('/payments/invoice/create', data),
   addInvoiceItem: (data) => api.post('/payments/invoice/item', data),

@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import psycopg2
 import psycopg2.extras
 from datetime import date, timedelta
+from typing import Optional
 from db import get_connection
 from models5 import (
     AccountCheckRequest, AccountCheckResponse,
@@ -12,6 +13,7 @@ from models5 import (
     ApplicationListItem, ApplicationListResponse,
     OrnamentCreateRequest, OrnamentCreateResponse,
     EstimationItemCreateRequest, EstimationResponse,
+    EnquiryCreateRequest, EnquiryCreateResponse, EnquiryItem, EnquiryListResponse,
     PledgeDetailsCreateRequest, PledgeDetailsResponse,
     AddressCreateRequest,
     BankAccountCreateRequest,
@@ -539,6 +541,231 @@ def create_account(payload: AccountCreateRequest):
     except psycopg2.errors.UniqueViolation:
         conn.rollback()
         raise HTTPException(409, "Account already exists")
+    finally:
+        cur.close()
+        conn.close()
+
+
+def ensure_enquiries_table(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS gold_schema.enquiries (
+            enquiry_id SERIAL PRIMARY KEY,
+            account_id INT NULL,
+            name TEXT NOT NULL,
+            mobile VARCHAR(32),
+            email TEXT,
+            branch TEXT,
+            enquiry_type TEXT NOT NULL,
+            product_interest TEXT,
+            source TEXT,
+            ornament_type TEXT,
+            quantity INT,
+            expected_amount NUMERIC(18,2),
+            gold_weight_gms NUMERIC(18,4),
+            purity_percentage NUMERIC(5,2),
+            pledge_amount NUMERIC(18,2),
+            financier_name TEXT,
+            financier_branch TEXT,
+            lead_state TEXT,
+            lead_status TEXT,
+            lead_stage TEXT,
+            follow_up_date DATE,
+            priority TEXT,
+            remarks TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE gold_schema.enquiries
+            ADD COLUMN IF NOT EXISTS ornament_type TEXT,
+            ADD COLUMN IF NOT EXISTS quantity INT,
+            ADD COLUMN IF NOT EXISTS pledge_amount NUMERIC(18,2),
+            ADD COLUMN IF NOT EXISTS financier_name TEXT,
+            ADD COLUMN IF NOT EXISTS financier_branch TEXT,
+            ADD COLUMN IF NOT EXISTS lead_state TEXT,
+            ADD COLUMN IF NOT EXISTS lead_status TEXT,
+            ADD COLUMN IF NOT EXISTS lead_stage TEXT
+        """
+    )
+
+
+@app.post("/enquiries/create", response_model=EnquiryCreateResponse)
+def create_enquiry(payload: EnquiryCreateRequest):
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        ensure_enquiries_table(cur)
+
+        account_id = None
+        if payload.mobile:
+            cur.execute(
+                "SELECT account_id FROM gold_schema.accounts WHERE mobile = %s LIMIT 1",
+                (payload.mobile,)
+            )
+            row = cur.fetchone()
+            if row:
+                account_id = row[0]
+
+        cur.execute(
+            """
+            INSERT INTO gold_schema.enquiries (
+                account_id, name, mobile, email, branch,
+                enquiry_type, product_interest, source,
+                ornament_type, quantity,
+                expected_amount, gold_weight_gms, purity_percentage,
+                pledge_amount, financier_name, financier_branch,
+                lead_state, lead_status, lead_stage,
+                follow_up_date, priority, remarks
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            RETURNING enquiry_id
+            """,
+            (
+                account_id,
+                payload.name,
+                payload.mobile,
+                payload.email,
+                payload.branch,
+                payload.enquiry_type,
+                payload.product_interest,
+                payload.source,
+                payload.ornament_type,
+                payload.quantity,
+                payload.expected_amount,
+                payload.gold_weight_gms,
+                payload.purity_percentage,
+                payload.pledge_amount,
+                payload.financier_name,
+                payload.financier_branch,
+                payload.lead_state,
+                payload.lead_status,
+                payload.lead_stage,
+                payload.follow_up_date,
+                payload.priority,
+                payload.remarks
+            )
+        )
+        enquiry_id = cur.fetchone()[0]
+        conn.commit()
+        return {
+            "enquiry_id": enquiry_id,
+            "status": "created"
+        }
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/enquiries/by-mobile", response_model=EnquiryListResponse)
+def get_enquiries_by_mobile(mobile: str = Query(None, description="Mobile number to filter enquiries")):
+    if not mobile:
+        raise HTTPException(400, "Mobile parameter is required")
+
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        ensure_enquiries_table(cur)
+        cur.execute(
+            """
+            SELECT enquiry_id, name, mobile, email, branch,
+                   enquiry_type, product_interest, pledge_amount,
+                   financier_name, financier_branch,
+                   lead_state, lead_status, lead_stage, created_at
+            FROM gold_schema.enquiries
+            WHERE mobile = %s
+            ORDER BY created_at DESC
+            LIMIT 20
+            """,
+            (mobile,)
+        )
+        enquiries = cur.fetchall()
+        return {"enquiries": enquiries}
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/enquiries/by-date", response_model=EnquiryListResponse)
+def get_enquiries_by_date(
+    date_from: Optional[date] = Query(None, description="Start date in YYYY-MM-DD format"),
+    date_to: Optional[date] = Query(None, description="End date in YYYY-MM-DD format"),
+    enquiry_type: Optional[str] = Query(None, description="Optional enquiry type filter"),
+    branch: Optional[str] = Query(None, description="Optional branch filter"),
+    mobile: Optional[str] = Query(None, description="Optional mobile number filter"),
+    follow_up_date: Optional[date] = Query(None, description="Optional follow-up date filter"),
+    lead_state: Optional[str] = Query(None, description="Optional lead state filter"),
+    lead_status: Optional[str] = Query(None, description="Optional lead status filter"),
+    lead_stage: Optional[str] = Query(None, description="Optional lead stage filter"),
+    sort_order: str = Query("desc", description="Sort order: asc or desc")
+):
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(400, "date_from cannot be greater than date_to")
+
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        ensure_enquiries_table(cur)
+        normalized_sort_order = sort_order.lower()
+        if normalized_sort_order not in ("asc", "desc"):
+            raise HTTPException(400, "sort_order must be asc or desc")
+
+        query = """
+            SELECT enquiry_id, name, mobile, email, branch,
+                   enquiry_type, product_interest, pledge_amount,
+                   financier_name, financier_branch,
+                   lead_state, lead_status, lead_stage,
+                   follow_up_date, created_at
+            FROM gold_schema.enquiries
+            WHERE 1=1
+        """
+        params = []
+
+        if date_from:
+            query += " AND DATE(created_at) >= %s"
+            params.append(date_from)
+
+        if date_to:
+            query += " AND DATE(created_at) <= %s"
+            params.append(date_to)
+
+        if enquiry_type:
+            query += " AND enquiry_type = %s"
+            params.append(enquiry_type)
+
+        if branch:
+            query += " AND branch = %s"
+            params.append(branch)
+
+        if mobile:
+            query += " AND mobile = %s"
+            params.append(mobile)
+
+        if follow_up_date:
+            query += " AND follow_up_date = %s"
+            params.append(follow_up_date)
+
+        if lead_state:
+            query += " AND lead_state = %s"
+            params.append(lead_state)
+
+        if lead_status:
+            query += " AND lead_status = %s"
+            params.append(lead_status)
+
+        if lead_stage:
+            query += " AND lead_stage = %s"
+            params.append(lead_stage)
+
+        query += f" ORDER BY created_at {normalized_sort_order.upper()} LIMIT 200"
+
+        cur.execute(query, tuple(params))
+        enquiries = cur.fetchall()
+        return {"enquiries": enquiries}
     finally:
         cur.close()
         conn.close()

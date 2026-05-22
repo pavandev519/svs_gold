@@ -4,9 +4,15 @@ import { Lock, User, AlertCircle, Eye, EyeOff } from 'lucide-react'
 const USER_ACCOUNTS = {
   admin: {
     username: 'admin',
-    password: 'admin123',
+    password: 'admin123$',
     isAdmin: true,
     displayName: 'Admin'
+  },
+  teleuser: {
+    username: 'teleuser',
+    password: 'tele123',
+    isAdmin: false,
+    displayName: 'tele user'
   },
   dsnruser: {
     username: 'dsnruser',
@@ -62,7 +68,7 @@ export default function LoginPage({ onLoginSuccess }) {
         accountExists: true
       })
     } else {
-      setError('Invalid username or password. Allowed usernames: admin, dsnruser, narauser')
+      setError('Invalid username or password. Allowed usernames: admin, teleuser, dsnruser, narauser')
     }
 
     setLoading(false)

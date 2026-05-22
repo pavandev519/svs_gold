@@ -17,7 +17,7 @@ export default function App() {
       const storedLoginData = localStorage.getItem('svs_gold_login_data')
       if (storedLoginData) {
         const parsedData = JSON.parse(storedLoginData)
-        if (parsedData.isAdmin || parsedData.branchName) {
+        if (parsedData.isAdmin || parsedData.branchName || parsedData.username === 'teleuser') {
           setLoginData(parsedData)
         } else {
           localStorage.removeItem('svs_gold_login_data')
