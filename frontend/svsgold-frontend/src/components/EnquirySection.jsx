@@ -7,7 +7,9 @@ import {
   Phone,
   Wallet,
   CalendarDays,
-  FileText
+  FileText,
+  Pencil,
+  X
 } from 'lucide-react'
 import { enquiriesAPI, applicationsAPI } from '../api/api'
 import * as XLSX from 'xlsx'
@@ -27,12 +29,14 @@ const salutations = [
 ]
 
 const sourceOptions = [
-  'Walk-in',
-  'Phone',
-  'WhatsApp',
-  'Web',
-  'Referral',
-  'Other'
+  'Facebook',
+  'Direct Inbound',
+  '3DM Inbound',
+  'Instagram',
+  'Youtube',
+  'Google Ads',
+  'Google Search',
+  'Chatbot'
 ]
 
 const defaultOrnamentTypes = [
@@ -46,8 +50,8 @@ const defaultOrnamentTypes = [
 ]
 
 const priorityOptions = ['Low', 'Medium', 'High']
-const leadStateOptions = ['Qualified', 'Disqualified']
-const leadStatusOptions = ['Answered', 'Not Answered']
+const leadStateOptions = ['New', 'Qualified', 'Disqualified']
+const leadStatusOptions = ['Open', 'Answered', 'Not Answered']
 const leadStageOptions = ['Enquiry', 'Gold Loan', 'Already sold', 'Processing fee','Non local','Not interested','Follow-up later','Junk','Converted','Others']
 
 const initialForm = {
@@ -60,7 +64,7 @@ const initialForm = {
   product_interest: '',
   source: 'Walk-in',
   ornament_type: 'Ring',
-  quantity: '',
+  processing_fee: '',
   gross_weight_gms: '',
   net_weight_gms: '',
   purity_percentage: '',
@@ -70,13 +74,15 @@ const initialForm = {
   financier_branch: '',
   lead_state: 'New',
   lead_status: 'Open',
-  lead_stage: 'Inquiry',
+  lead_stage: 'Enquiry',
   follow_up_date: '',
   priority: 'Medium',
   remarks: ''
 }
 
 export default function Enquiry() {
+  const [formOpen, setFormOpen] = useState(false)
+  const [editingEnquiry, setEditingEnquiry] = useState(null)
   const [form, setForm] = useState(initialForm)
   const [saving, setSaving] = useState(false)
   const [success, setSuccess] = useState('')
@@ -101,13 +107,75 @@ export default function Enquiry() {
   const [loadingPast, setLoadingPast] = useState(false)
   const [pastError, setPastError] = useState('')
 
-  const expectedRate = (() => {
-    const netWeight = parseFloat(form.net_weight_gms) || 0
-    const purity = parseFloat(form.purity_percentage) || 0
-    const dayRate = parseFloat(form.rate) || 0
-    if (!netWeight || !purity || !dayRate) return ''
-    return (netWeight * (purity / 100) * dayRate).toFixed(2)
-  })()
+const grossAmount = (() => {
+  const netWeight =
+    parseFloat(
+      form.net_weight_gms
+    ) || 0
+
+  const purity =
+    parseFloat(
+      form.purity_percentage
+    ) || 0
+
+  const dayRate =
+    parseFloat(form.rate) || 0
+
+  if (
+    !netWeight ||
+    !purity ||
+    !dayRate
+  ) {
+    return 0
+  }
+
+  return (
+    netWeight *
+    dayRate *
+    (purity / 100)
+  )
+})()
+
+const netAmount = (() => {
+  const gross =
+    Number(grossAmount) || 0
+
+  if (!gross) return 0
+
+  const processingFee =
+    parseFloat(
+      form.processing_fee
+    ) || 0
+
+  // PF deduction
+  const pfDeduction =
+    gross *
+    (processingFee / 100)
+
+  // After PF
+  const afterPF =
+    gross - pfDeduction
+
+  // Pledge Gold
+  if (
+    form.enquiry_type ===
+    'Pledge Gold'
+  ) {
+    const pledgeAmount =
+      parseFloat(
+        form.pledge_amount
+      ) || 0
+
+    return (
+      afterPF -
+      pledgeAmount
+    )
+  }
+
+  // Sell Gold
+  return afterPF
+})()
+
 
   useEffect(() => {
     const loadBranches = async () => {
@@ -207,6 +275,59 @@ export default function Enquiry() {
     }
   }
 
+  const formatDateForInput = (value) => {
+    if (!value) return ''
+    return value.toString().slice(0, 10)
+  }
+
+  const openNewEnquiry = () => {
+    setEditingEnquiry(null)
+    setForm(initialForm)
+    setError('')
+    setSuccess('')
+    setFormOpen(true)
+  }
+
+  const openEditEnquiry = (item) => {
+    setEditingEnquiry(item)
+    setForm({
+      ...initialForm,
+      salutation: item.salutation || initialForm.salutation,
+      name: item.name || '',
+      mobile: item.mobile || '',
+      email: item.email || '',
+      branch: item.branch || '',
+      enquiry_type: item.enquiry_type || initialForm.enquiry_type,
+      product_interest: item.product_interest || '',
+      source: item.source || initialForm.source,
+      ornament_type: item.ornament_type || initialForm.ornament_type,
+      processing_fee: item.processing_fee ?? '',
+      gross_weight_gms: item.gross_weight_gms ?? '',
+      net_weight_gms: item.gold_weight_gms ?? '',
+      purity_percentage: item.purity_percentage ?? '',
+      rate: item.rate ?? '',
+      pledge_amount: item.pledge_amount ?? '',
+      financier_name: item.financier_name || '',
+      financier_branch: item.financier_branch || '',
+      lead_state: item.lead_state || initialForm.lead_state,
+      lead_status: item.lead_status || initialForm.lead_status,
+      lead_stage: item.lead_stage || initialForm.lead_stage,
+      follow_up_date: formatDateForInput(item.follow_up_date),
+      priority: item.priority || initialForm.priority,
+      remarks: item.remarks || ''
+    })
+    setError('')
+    setSuccess('')
+    setFormOpen(true)
+  }
+
+  const closeForm = () => {
+    setFormOpen(false)
+    setEditingEnquiry(null)
+    setError('')
+    setSuccess('')
+  }
+
   const exportPastEnquiries = () => {
     if (pastEnquiries.length === 0) {
       setPastError('No results available to export')
@@ -214,18 +335,33 @@ export default function Enquiry() {
     }
 
     const rows = pastEnquiries.map((item) => ({
+      Enquiry_ID: item.enquiry_id || '',
       Date: formatDateTime(item.created_at),
+      Salutation: item.salutation || '',
       Customer: item.name || '',
       Mobile: item.mobile || '',
+      Email: item.email || '',
+      Branch: item.branch || '',
       Category: item.enquiry_type || '',
+      Product_Interest: item.product_interest || '',
+      Source: item.source || '',
+      Ornament_Type: item.ornament_type || '',
+      Processing_Fee_Percentage: item.processing_fee || '',
+      Gross_Amount: item.expected_amount || '',
+      Gross_Weight_Gms: item.gross_weight_gms || '',
+      Net_Weight_Gms: item.gold_weight_gms || '',
+      Purity_Percentage: item.purity_percentage || '',
+      Day_Rate: item.rate || '',
+      Net_Amount: item.net_amount || '',
+      Pledge_Amount: item.pledge_amount || '',
+      Financier_Name: item.financier_name || '',
+      Financier_Branch: item.financier_branch || '',
       Lead_State: item.lead_state || '',
       Lead_Status: item.lead_status || '',
       Lead_Stage: item.lead_stage || '',
       Follow_Up_Date: item.follow_up_date || '',
-      Branch: item.branch || '',
-      Pledge_Amount: item.pledge_amount || '',
-      Financier_Name: item.financier_name || '',
-      Financier_Branch: item.financier_branch || ''
+      Priority: item.priority || '',
+      Remarks: item.remarks || ''
     }))
 
     const ws = XLSX.utils.json_to_sheet(rows)
@@ -241,35 +377,227 @@ export default function Enquiry() {
     setError('')
     setSuccess('')
 
-    if (!form.name.trim()) {
-      setError('Customer name is required')
+  // Customer Information
+  if (!form.salutation?.trim()) {
+    setError('Salutation is required')
+    return
+  }
+
+  if (!form.name?.trim()) {
+    setError('Customer name is required')
+    return
+  }
+
+  if (!form.mobile?.trim()) {
+    setError('Mobile number is required')
+    return
+  }
+
+  // Mobile validation
+  if (!/^\d{10}$/.test(form.mobile.trim())) {
+    setError(
+      'Mobile number must be exactly 10 digits'
+    )
+    return
+  }
+
+  if (!form.branch?.trim()) {
+    setError('Branch is required')
+    return
+  }
+
+  // Enquiry Details
+  if (!form.enquiry_type?.trim()) {
+    setError('Enquiry type is required')
+    return
+  }
+
+  if (!form.source?.trim()) {
+    setError('Source is required')
+    return
+  }
+
+  // Gold Details
+  if (!form.ornament_type?.trim()) {
+    setError('Ornament type is required')
+    return
+  }
+
+  if (
+    !form.processing_fee &&
+    form.processing_fee !== 0
+  ) {
+    setError(
+      'Processing fee is required'
+    )
+    return
+  }
+
+  if (!form.gross_weight_gms) {
+    setError(
+      'Gross weight is required'
+    )
+    return
+  }
+
+  if (!form.net_weight_gms) {
+    setError(
+      'Net weight is required'
+    )
+    return
+  }
+
+  if (!form.purity_percentage) {
+    setError('Purity is required')
+    return
+  }
+
+  if (!form.rate) {
+    setError('Day rate is required')
+    return
+  }
+
+  // Pledge Gold validations
+  if (
+    form.enquiry_type ===
+    'Pledge Gold'
+  ) {
+    if (!form.pledge_amount) {
+      setError(
+        'Pledge amount is required'
+      )
       return
     }
 
-    if (!form.mobile.trim()) {
-      setError('Mobile number is required')
+    if (
+      !form.financier_name?.trim()
+    ) {
+      setError(
+        'Financier name is required'
+      )
       return
     }
 
+    if (
+      !form.financier_branch?.trim()
+    ) {
+      setError(
+        'Financier branch is required'
+      )
+      return
+    }
+  }
+
+  // Leads
+  if (!form.lead_state?.trim()) {
+    setError(
+      'Lead state is required'
+    )
+    return
+  }
+
+  if (!form.lead_status?.trim()) {
+    setError(
+      'Lead status is required'
+    )
+    return
+  }
+
+  if (!form.lead_stage?.trim()) {
+    setError(
+      'Lead stage is required'
+    )
+    return
+  }
+
+  // Follow-up
+  if (!form.follow_up_date) {
+    setError(
+      'Follow-up date is required'
+    )
+    return
+  }
+
+  // Remarks
+  if (!form.remarks?.trim()) {
+    setError('Remarks are required')
+    return
+  }
+
+// Only 10 digit mobile validation
+if (!/^\d{10}$/.test(form.mobile.trim())) {
+  setError(
+    'Mobile number must be exactly 10 digits'
+  )
+  return
+}
+const numericFields = [
+  {
+    key: 'processing_fee',
+    label: 'Processing fee'
+  },
+  {
+    key: 'gross_weight_gms',
+    label: 'Gross weight'
+  },
+  {
+    key: 'net_weight_gms',
+    label: 'Net weight'
+  },
+  {
+    key: 'purity_percentage',
+    label: 'Purity'
+  },
+  {
+    key: 'rate',
+    label: 'Day rate'
+  },
+  {
+    key: 'pledge_amount',
+    label: 'Pledge amount'
+  }
+]
+
+for (const field of numericFields) {
+  const value = Number(
+    form[field.key]
+  )
+
+  if (
+    form[field.key] !== '' &&
+    value < 0
+  ) {
+    setError(
+      `${field.label} cannot be negative`
+    )
+    return
+  }
+}
     setSaving(true)
 
     try {
       const payload = {
-        name: form.name,
-        mobile: form.mobile,
-        email: form.email,
+        name: form.name.trim(),
+        salutation: form.salutation,
+        mobile: form.mobile.trim(),
+        email: form.email.trim() || null,
         branch: form.branch,
         enquiry_type: form.enquiry_type,
         product_interest: form.product_interest,
         source: form.source,
         ornament_type: form.ornament_type,
-        quantity: form.quantity
-          ? parseInt(form.quantity, 10)
+        processing_fee: form.processing_fee
+          ? parseFloat(
+              form.processing_fee
+            )
           : null,
-        expected_amount: expectedRate
-          ? parseFloat(expectedRate)
-          : form.rate
-          ? parseFloat(form.rate)
+        expected_amount: grossAmount
+          ? parseFloat(
+              grossAmount
+            )
+          : null,
+        gross_weight_gms: form.gross_weight_gms
+          ? parseFloat(form.gross_weight_gms)
           : null,
         gold_weight_gms: form.net_weight_gms
           ? parseFloat(form.net_weight_gms)
@@ -283,6 +611,12 @@ export default function Enquiry() {
         pledge_amount: form.pledge_amount
           ? parseFloat(form.pledge_amount)
           : null,
+        rate: form.rate
+          ? parseFloat(form.rate)
+          : null,
+        net_amount: netAmount
+          ? parseFloat(netAmount)
+          : null,
         financier_name: form.financier_name,
         financier_branch: form.financier_branch,
         lead_state: form.lead_state,
@@ -293,21 +627,37 @@ export default function Enquiry() {
         remarks: form.remarks
       }
 
-      const response =
-        await enquiriesAPI.createEnquiry(
-          payload
-        )
+      const response = editingEnquiry
+        ? await enquiriesAPI.updateEnquiry({
+            enquiry_id: editingEnquiry.enquiry_id,
+            ...payload
+          })
+        : await enquiriesAPI.createEnquiry(
+            payload
+          )
 
       setSuccess(
-        `Enquiry saved successfully (ID: ${response.data.enquiry_id})`
+        editingEnquiry
+          ? `Enquiry updated successfully (ID: ${response.data.enquiry_id})`
+          : `Enquiry saved successfully (ID: ${response.data.enquiry_id})`
       )
 
-      setForm({
-        ...initialForm,
-        mobile: form.mobile
-      })
+      if (!editingEnquiry) {
+        setForm({
+          ...initialForm,
+          mobile: form.mobile
+        })
+      }
 
       loadRecentEnquiries(form.mobile)
+      if (pastEnquiries.length > 0) {
+        loadPastEnquiries()
+      }
+
+      // Close the form after 2 seconds
+      setTimeout(() => {
+        closeForm()
+      }, 2000)
     } catch (err) {
       setError(
         err.response?.data?.detail ||
@@ -506,19 +856,24 @@ export default function Enquiry() {
               </div>
             )}
 
-            <div className="mt-5 overflow-x-auto rounded-xl border border-[#E8D5A8]">
-              <table className="w-full min-w-[840px] text-sm">
-                <thead className="bg-[#FFF4D6]">
+            <div className="mt-5 max-h-[360px] overflow-auto rounded-xl border border-[#E8D5A8]">
+              <table className="w-full min-w-[960px] text-sm">
+                <thead className="sticky top-0 z-10 bg-[#FFF4D6]">
                   <tr>
                     <th className="px-4 py-3 text-left font-semibold text-[#8B5E12]">Date</th>
                     <th className="px-4 py-3 text-left font-semibold text-[#8B5E12]">Customer</th>
                     <th className="px-4 py-3 text-left font-semibold text-[#8B5E12]">Mobile</th>
                     <th className="px-4 py-3 text-left font-semibold text-[#8B5E12]">Category</th>
+                    <th className="px-4 py-3 text-left font-semibold text-[#8B5E12]">Source</th>
+                    <th className="px-4 py-3 text-left font-semibold text-[#8B5E12]">Net Weight</th>
+                    <th className="px-4 py-3 text-left font-semibold text-[#8B5E12]">Pledge Amount</th>
                     <th className="px-4 py-3 text-left font-semibold text-[#8B5E12]">Follow-up Date</th>
                     <th className="px-4 py-3 text-left font-semibold text-[#8B5E12]">Lead State</th>
                     <th className="px-4 py-3 text-left font-semibold text-[#8B5E12]">Lead Status</th>
                     <th className="px-4 py-3 text-left font-semibold text-[#8B5E12]">Lead Stage</th>
+                    <th className="px-4 py-3 text-left font-semibold text-[#8B5E12]">Remarks</th>
                     <th className="px-4 py-3 text-left font-semibold text-[#8B5E12]">Branch</th>
+                    <th className="px-4 py-3 text-left font-semibold text-[#8B5E12]">Action</th>
                   </tr>
                 </thead>
 
@@ -542,6 +897,32 @@ export default function Enquiry() {
                           {item.enquiry_type || '—'}
                         </td>
                         <td className="px-4 py-3 text-gray-700">
+  {item.source || '—'}
+</td>
+                      <td className="px-4 py-3 text-gray-700 font-medium">
+  {item.gold_weight_gms
+    ? Number(
+        item.gold_weight_gms
+      ).toLocaleString(
+        'en-IN',
+        {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 2,
+        }
+      )
+    : '—'}
+</td>
+
+<td className="px-4 py-3 text-gray-700 font-medium">
+  {item.pledge_amount
+    ? `₹${Number(
+        item.pledge_amount
+      ).toLocaleString(
+        'en-IN'
+      )}`
+    : '—'}
+</td>
+                        <td className="px-4 py-3 text-gray-700">
                           {item.follow_up_date || '—'}
                         </td>
                         <td className="px-4 py-3 text-gray-700">
@@ -553,15 +934,31 @@ export default function Enquiry() {
                         <td className="px-4 py-3 text-gray-700">
                           {item.lead_stage || '—'}
                         </td>
+                        <td
+  className="px-4 py-3 text-gray-700 max-w-[220px] truncate"
+  title={item.remarks}
+>
+  {item.remarks || '—'}
+</td>
                         <td className="px-4 py-3 text-gray-700">
                           {item.branch || '—'}
+                        </td>
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            onClick={() => openEditEnquiry(item)}
+                            className="inline-flex items-center gap-2 rounded-xl border border-[#D8C08A] px-3 py-2 text-sm font-semibold text-[#8B5E12] hover:bg-[#FFF8E8] transition-all"
+                          >
+                            <Pencil size={14} />
+                            Edit
+                          </button>
                         </td>
                       </tr>
                     ))
                   ) : (
                     <tr>
                       <td
-                          colSpan="9"
+                          colSpan="10"
                           className="px-4 py-6 text-center text-gray-500 bg-[#FFFDF8]"
                         >
                         {loadingPast
@@ -575,13 +972,52 @@ export default function Enquiry() {
             </div>
           </div>
 
-          <form
-            onSubmit={handleSubmit}
-            className="grid xl:grid-cols-[minmax(0,1.8fr)_340px] gap-6"
-          >
+          {!formOpen && (
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={openNewEnquiry}
+                className="bg-gradient-to-r from-[#8B5E12] via-[#B67D22] to-[#D4A437] hover:opacity-95 transition-all text-white font-semibold rounded-2xl px-8 py-3 shadow-lg"
+              >
+                + New Enquiry
+              </button>
+            </div>
+          )}
 
-          {/* LEFT SECTION */}
-          <div className="space-y-5">
+          {/* MODAL OVERLAY */}
+          {formOpen && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-3xl shadow-2xl border border-[#E5D2A0] overflow-hidden max-w-6xl w-full max-h-[90vh] flex flex-col">
+                
+                {/* MODAL HEADER */}
+                <div className="bg-gradient-to-r from-[#7A4E0B] via-[#A9741F] to-[#D4A437] px-6 py-5 border-b border-[#D6B36A] flex items-center justify-between flex-shrink-0">
+                  <div>
+                    <h2 className="text-2xl font-bold text-white tracking-wide">
+                      {editingEnquiry ? 'Edit Enquiry' : 'New Enquiry'}
+                    </h2>
+                    <p className="text-amber-100 text-sm mt-1">
+                      Customer enquiry & lead management
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeForm}
+                    className="bg-white/20 hover:bg-white/30 transition-all rounded-full p-2 flex items-center justify-center"
+                  >
+                    <X size={24} className="text-white" />
+                  </button>
+                </div>
+
+                {/* MODAL CONTENT */}
+                <form
+                  onSubmit={handleSubmit}
+                  className="p-5 overflow-y-auto flex-1"
+                >
+
+                  <div className="grid xl:grid-cols-[minmax(0,1.8fr)_340px] gap-6 h-fit">
+
+                  {/* LEFT SECTION */}
+                  <div className="space-y-5">
 
             {/* CUSTOMER INFO */}
             <div className="bg-[#FFFDF8] border border-[#E7D3A4] rounded-2xl p-5">
@@ -615,13 +1051,20 @@ export default function Enquiry() {
                   }
                 />
 
-                <InputField
-                  label="Mobile Number *"
-                  value={form.mobile}
-                  onChange={(v) =>
-                    handleChange('mobile', v)
-                  }
-                />
+<InputField
+  label="Mobile Number *"
+  type="tel"
+  value={form.mobile}
+  maxLength={10}
+  onChange={(v) =>
+    handleChange(
+      'mobile',
+      v
+        .replace(/\D/g, '') // only digits
+        .slice(0, 10) // max 10 digits
+    )
+  }
+/>
 
                 <InputField
                   label="Email"
@@ -724,14 +1167,20 @@ export default function Enquiry() {
                   }
                 />
 
-                <InputField
-                  type="number"
-                  label="Quantity"
-                  value={form.quantity}
-                  onChange={(v) =>
-                    handleChange('quantity', v)
-                  }
-                />
+                  <InputField
+                    type="number"
+                    label="Processing Fee (%)"
+                    value={form.processing_fee}
+                    onChange={(v) =>
+                      handleChange(
+                        'processing_fee',
+                        Math.max(
+                          0,
+                          Number(v)
+                        ) || ''
+                      )
+                    }
+                  />
 
                 <InputField
                   type="number"
@@ -740,7 +1189,10 @@ export default function Enquiry() {
                   onChange={(v) =>
                     handleChange(
                       'gross_weight_gms',
-                      v
+                      Math.max(
+                        0,
+                        Number(v)
+                      ) || ''
                     )
                   }
                 />
@@ -752,7 +1204,10 @@ export default function Enquiry() {
                   onChange={(v) =>
                     handleChange(
                       'net_weight_gms',
-                      v
+                      Math.max(
+                        0,
+                        Number(v)
+                      ) || ''
                     )
                   }
                 />
@@ -764,7 +1219,10 @@ export default function Enquiry() {
                   onChange={(v) =>
                     handleChange(
                       'purity_percentage',
-                      v
+                      Math.max(
+                        0,
+                        Number(v)
+                      ) || ''
                     )
                   }
                 />
@@ -774,19 +1232,88 @@ export default function Enquiry() {
                   label="Day Rate"
                   value={form.rate}
                   onChange={(v) =>
-                    handleChange('rate', v)
+                    handleChange(
+                      'rate',
+                      Math.max(
+                        0,
+                        Number(v)
+                      ) || ''
+                    )
                   }
                 />
               </div>
 
-              <div className="mt-4">
-                <InputField
-                  type="text"
-                  label="Expected Rate"
-                  value={expectedRate}
-                  readOnly
-                />
-              </div>
+<div
+  className={`mt-4 grid gap-4 ${
+    form.enquiry_type ===
+    'Pledge Gold'
+      ? 'md:grid-cols-3'
+      : 'md:grid-cols-2'
+  }`}
+>
+
+  {/* Gross Amount */}
+  <InputField
+    type="text"
+    label="Gross Amount"
+    value={
+      grossAmount
+        ? grossAmount.toFixed(
+            2
+          )
+        : ''
+    }
+    readOnly
+  />
+
+  {/* Net Amount (after PF deduction) */}
+  <InputField
+    type="text"
+    label="Net Amount"
+    value={
+      (() => {
+        const gross =
+          Number(
+            grossAmount
+          ) || 0
+
+        const pf =
+          parseFloat(
+            form.processing_fee
+          ) || 0
+
+        const deduction =
+          gross *
+          (pf / 100)
+
+        return gross
+          ? (
+              gross -
+              deduction
+            ).toFixed(2)
+          : ''
+      })()
+    }
+    readOnly
+  />
+
+  {/* Balance Amount - Pledge Gold only */}
+  {form.enquiry_type ===
+    'Pledge Gold' && (
+    <InputField
+      type="text"
+      label="Balance Amount"
+      value={
+        netAmount
+          ? netAmount.toFixed(
+              2
+            )
+          : ''
+      }
+      readOnly
+    />
+  )}
+</div>
 
               {form.enquiry_type === 'Pledge Gold' && (
                 <div className="bg-[#FFFDF8] border border-[#E7D3A4] rounded-2xl p-5 mt-5">
@@ -807,7 +1334,13 @@ export default function Enquiry() {
                       label="Pledge Amount"
                       value={form.pledge_amount}
                       onChange={(v) =>
-                        handleChange('pledge_amount', v)
+                        handleChange(
+                          'pledge_amount',
+                          Math.max(
+                            0,
+                            Number(v)
+                          ) || ''
+                        )
                       }
                     />
 
@@ -953,8 +1486,12 @@ export default function Enquiry() {
               )}
 
               {saving
-                ? 'Saving Enquiry...'
-                : 'Save Enquiry'}
+                ? editingEnquiry
+                  ? 'Updating Enquiry...'
+                  : 'Saving Enquiry...'
+                : editingEnquiry
+                  ? 'Update Enquiry'
+                  : 'Save Enquiry'}
             </button>
           </div>
 
@@ -962,7 +1499,7 @@ export default function Enquiry() {
           <div className="space-y-5 xl:max-w-[340px]">
 
             {/* SUMMARY */}
-            <div className="sticky top-4 bg-[#FFF8E8] border border-[#E4C77F] rounded-2xl p-4 shadow-sm">
+            <div className="bg-[#FFF8E8] border border-[#E4C77F] rounded-2xl p-4 shadow-sm">
               <h3 className="font-bold text-base text-[#8B5E12] mb-3">
                 Enquiry Summary
               </h3>
@@ -988,8 +1525,8 @@ export default function Enquiry() {
               />
 
               <SummaryItem
-                label="Quantity"
-                value={form.quantity}
+                label="Processing Fee (₹)"
+                value={form.processing_fee}
               />
 
               <SummaryItem
@@ -1008,8 +1545,18 @@ export default function Enquiry() {
               />
 
               <SummaryItem
-                label="Expected Rate"
-                value={expectedRate}
+                label={
+                  form.enquiry_type ===
+                  'Pledge Gold'
+                    ? 'Expected Rate'
+                    : 'Gross Amount'
+                }
+                value={grossAmount}
+              />
+
+              <SummaryItem
+                label="Net Amount"
+                value={netAmount}
               />
 
               {form.enquiry_type === 'Pledge Gold' && (
@@ -1102,7 +1649,11 @@ export default function Enquiry() {
             </div>
 
           </div>
-        </form>
+                  </div>
+                </form>
+                </div>
+              </div>
+          )}
         </div>
       </div>
     </div>
@@ -1114,7 +1665,8 @@ function InputField({
   value,
   onChange,
   type = 'text',
-  readOnly = false
+  readOnly = false,
+  maxLength
 }) {
   return (
     <div>
@@ -1122,17 +1674,31 @@ function InputField({
         {label}
       </label>
 
-      <input
-        type={type}
-        value={value}
-        readOnly={readOnly}
-        onChange={(e) =>
-          !readOnly && onChange(e.target.value)
-        }
-        className={`mt-1 w-full rounded-xl border border-[#D8C08A] bg-white px-4 py-3 outline-none focus:border-[#B67D22] ${
-          readOnly ? 'bg-gray-100 text-gray-700 cursor-not-allowed' : ''
-        }`}
-      />
+<input
+  type={type}
+  value={value}
+  readOnly={readOnly}
+  maxLength={maxLength}
+  inputMode={
+    type === 'tel'
+      ? 'numeric'
+      : undefined
+  }
+  pattern={
+    type === 'tel'
+      ? '[0-9]*'
+      : undefined
+  }
+  onChange={(e) =>
+    !readOnly &&
+    onChange(e.target.value)
+  }
+  className={`mt-1 w-full rounded-xl border border-[#D8C08A] bg-white px-4 py-3 outline-none focus:border-[#B67D22] ${
+    readOnly
+      ? 'bg-gray-100 text-gray-700 cursor-not-allowed'
+      : ''
+  }`}
+/>
     </div>
   )
 }

@@ -142,6 +142,7 @@ export const applicationsAPI = {
 
 export const enquiriesAPI = {
   createEnquiry: (data) => api.post('/enquiries/create', data),
+  updateEnquiry: (data) => api.put('/enquiries/update', data),
   getByMobile: (mobile) => api.get(`/enquiries/by-mobile?mobile=${encodeURIComponent(mobile)}`),
   getByDate: ({ dateFrom, dateTo, enquiryType, branch, mobile, followUpDate, leadState, leadStatus, leadStage, sortOrder }) => {
     const params = new URLSearchParams()
