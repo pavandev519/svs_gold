@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr, validator
 from typing import Optional, List
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 
@@ -280,6 +280,57 @@ class EstimationResponse(BaseModel):
     gross_amount: Decimal
     net_amount: Decimal
     status: str
+
+
+class EnquiryCreateRequest(BaseModel):
+    name: str
+    mobile: Optional[str] = None
+    email: Optional[EmailStr] = None
+    branch: Optional[str] = None
+    enquiry_type: str
+    product_interest: Optional[str] = None
+    source: Optional[str] = None
+    ornament_type: Optional[str] = None
+    quantity: Optional[int] = None
+    expected_amount: Optional[Decimal] = None
+    gold_weight_gms: Optional[Decimal] = None
+    purity_percentage: Optional[Decimal] = None
+    pledge_amount: Optional[Decimal] = None
+    financier_name: Optional[str] = None
+    financier_branch: Optional[str] = None
+    lead_state: Optional[str] = None
+    lead_status: Optional[str] = None
+    lead_stage: Optional[str] = None
+    follow_up_date: Optional[date] = None
+    priority: Optional[str] = None
+    remarks: Optional[str] = None
+
+
+class EnquiryCreateResponse(BaseModel):
+    enquiry_id: int
+    status: str
+
+
+class EnquiryItem(BaseModel):
+    enquiry_id: int
+    name: str
+    mobile: Optional[str] = None
+    email: Optional[EmailStr] = None
+    enquiry_type: str
+    branch: Optional[str] = None
+    product_interest: Optional[str] = None
+    pledge_amount: Optional[Decimal] = None
+    financier_name: Optional[str] = None
+    financier_branch: Optional[str] = None
+    lead_state: Optional[str] = None
+    lead_status: Optional[str] = None
+    lead_stage: Optional[str] = None
+    follow_up_date: Optional[date] = None
+    created_at: Optional[datetime] = None
+
+
+class EnquiryListResponse(BaseModel):
+    enquiries: List[EnquiryItem]
 
 
 # -------------------------------------------------
