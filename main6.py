@@ -13,7 +13,7 @@ from models5 import (
     ApplicationListItem, ApplicationListResponse,
     OrnamentCreateRequest, OrnamentCreateResponse,
     EstimationItemCreateRequest, EstimationResponse,
-    EnquiryCreateRequest, EnquiryCreateResponse, EnquiryItem, EnquiryListResponse,
+    EnquiryCreateRequest, EnquiryCreateResponse, EnquiryItem, EnquiryListResponse, EnquiryUpdateRequest,
     PledgeDetailsCreateRequest, PledgeDetailsResponse,
     AddressCreateRequest,
     BankAccountCreateRequest,
@@ -552,6 +552,7 @@ def ensure_enquiries_table(cur):
         CREATE TABLE IF NOT EXISTS gold_schema.enquiries (
             enquiry_id SERIAL PRIMARY KEY,
             account_id INT NULL,
+            salutation TEXT,
             name TEXT NOT NULL,
             mobile VARCHAR(32),
             email TEXT,
@@ -561,9 +562,13 @@ def ensure_enquiries_table(cur):
             source TEXT,
             ornament_type TEXT,
             quantity INT,
+            processing_fee NUMERIC(5,2),
             expected_amount NUMERIC(18,2),
+            gross_weight_gms NUMERIC(18,4),
             gold_weight_gms NUMERIC(18,4),
             purity_percentage NUMERIC(5,2),
+            rate NUMERIC(18,2),
+            net_amount NUMERIC(18,2),
             pledge_amount NUMERIC(18,2),
             financier_name TEXT,
             financier_branch TEXT,
@@ -580,14 +585,27 @@ def ensure_enquiries_table(cur):
     cur.execute(
         """
         ALTER TABLE gold_schema.enquiries
+            ADD COLUMN IF NOT EXISTS salutation TEXT,
             ADD COLUMN IF NOT EXISTS ornament_type TEXT,
             ADD COLUMN IF NOT EXISTS quantity INT,
+            ADD COLUMN IF NOT EXISTS processing_fee NUMERIC(5,2),
+            ADD COLUMN IF NOT EXISTS expected_amount NUMERIC(18,2),
+            ADD COLUMN IF NOT EXISTS gross_weight_gms NUMERIC(18,4),
+            ADD COLUMN IF NOT EXISTS gold_weight_gms NUMERIC(18,4),
+            ADD COLUMN IF NOT EXISTS purity_percentage NUMERIC(5,2),
+            ADD COLUMN IF NOT EXISTS rate NUMERIC(18,2),
+            ADD COLUMN IF NOT EXISTS net_amount NUMERIC(18,2),
             ADD COLUMN IF NOT EXISTS pledge_amount NUMERIC(18,2),
             ADD COLUMN IF NOT EXISTS financier_name TEXT,
             ADD COLUMN IF NOT EXISTS financier_branch TEXT,
+            ADD COLUMN IF NOT EXISTS source TEXT,
+            ADD COLUMN IF NOT EXISTS product_interest TEXT,
             ADD COLUMN IF NOT EXISTS lead_state TEXT,
             ADD COLUMN IF NOT EXISTS lead_status TEXT,
-            ADD COLUMN IF NOT EXISTS lead_stage TEXT
+            ADD COLUMN IF NOT EXISTS lead_stage TEXT,
+            ADD COLUMN IF NOT EXISTS follow_up_date DATE,
+            ADD COLUMN IF NOT EXISTS priority TEXT,
+            ADD COLUMN IF NOT EXISTS remarks TEXT
         """
     )
 
@@ -612,18 +630,21 @@ def create_enquiry(payload: EnquiryCreateRequest):
         cur.execute(
             """
             INSERT INTO gold_schema.enquiries (
-                account_id, name, mobile, email, branch,
+                account_id, salutation, name, mobile, email, branch,
                 enquiry_type, product_interest, source,
                 ornament_type, quantity,
-                expected_amount, gold_weight_gms, purity_percentage,
+                processing_fee, expected_amount,
+                gross_weight_gms, gold_weight_gms,
+                purity_percentage, rate, net_amount,
                 pledge_amount, financier_name, financier_branch,
                 lead_state, lead_status, lead_stage,
                 follow_up_date, priority, remarks
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING enquiry_id
             """,
             (
                 account_id,
+                payload.salutation,
                 payload.name,
                 payload.mobile,
                 payload.email,
@@ -633,9 +654,13 @@ def create_enquiry(payload: EnquiryCreateRequest):
                 payload.source,
                 payload.ornament_type,
                 payload.quantity,
+                payload.processing_fee,
                 payload.expected_amount,
+                payload.gross_weight_gms,
                 payload.gold_weight_gms,
                 payload.purity_percentage,
+                payload.rate,
+                payload.net_amount,
                 payload.pledge_amount,
                 payload.financier_name,
                 payload.financier_branch,
@@ -661,6 +686,84 @@ def create_enquiry(payload: EnquiryCreateRequest):
         conn.close()
 
 
+@app.put("/enquiries/update", response_model=EnquiryCreateResponse)
+def update_enquiry(payload: EnquiryUpdateRequest):
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        ensure_enquiries_table(cur)
+
+        cur.execute(
+            "SELECT enquiry_id FROM gold_schema.enquiries WHERE enquiry_id = %s",
+            (payload.enquiry_id,)
+        )
+        if not cur.fetchone():
+            raise HTTPException(404, "Enquiry not found")
+
+        account_id = None
+        if payload.mobile:
+            cur.execute(
+                "SELECT account_id FROM gold_schema.accounts WHERE mobile = %s LIMIT 1",
+                (payload.mobile,)
+            )
+            row = cur.fetchone()
+            if row:
+                account_id = row[0]
+
+        update_data = payload.dict(exclude_unset=True)
+        update_data.pop("enquiry_id", None)
+        update_data["account_id"] = account_id
+
+        if not update_data:
+            raise HTTPException(400, "No data provided to update")
+
+        allowed_fields = {
+            "account_id", "salutation", "name", "mobile", "email", "branch",
+            "enquiry_type", "product_interest", "source",
+            "ornament_type", "quantity", "processing_fee",
+            "expected_amount", "gross_weight_gms", "gold_weight_gms",
+            "purity_percentage", "rate", "net_amount", "pledge_amount",
+            "financier_name", "financier_branch", "lead_state",
+            "lead_status", "lead_stage", "follow_up_date",
+            "priority", "remarks"
+        }
+
+        set_clauses = []
+        values = []
+        for field_name, field_value in update_data.items():
+            if field_name not in allowed_fields:
+                continue
+            set_clauses.append(f"{field_name} = %s")
+            values.append(field_value)
+
+        if not set_clauses:
+            raise HTTPException(400, "No valid fields provided to update")
+
+        values.append(payload.enquiry_id)
+        cur.execute(
+            f"""
+            UPDATE gold_schema.enquiries
+            SET {', '.join(set_clauses)}
+            WHERE enquiry_id = %s
+            """,
+            tuple(values)
+        )
+        conn.commit()
+        return {
+            "enquiry_id": payload.enquiry_id,
+            "status": "updated"
+        }
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
 @app.get("/enquiries/by-mobile", response_model=EnquiryListResponse)
 def get_enquiries_by_mobile(mobile: str = Query(None, description="Mobile number to filter enquiries")):
     if not mobile:
@@ -672,10 +775,14 @@ def get_enquiries_by_mobile(mobile: str = Query(None, description="Mobile number
         ensure_enquiries_table(cur)
         cur.execute(
             """
-            SELECT enquiry_id, name, mobile, email, branch,
-                   enquiry_type, product_interest, pledge_amount,
+            SELECT enquiry_id, salutation, name, mobile, email, branch,
+                   enquiry_type, product_interest, source,
+                   ornament_type, processing_fee, expected_amount,
+                   gross_weight_gms, gold_weight_gms,
+                   purity_percentage, rate, net_amount, pledge_amount,
                    financier_name, financier_branch,
-                   lead_state, lead_status, lead_stage, created_at
+                   lead_state, lead_status, lead_stage,
+                   follow_up_date, priority, remarks, created_at
             FROM gold_schema.enquiries
             WHERE mobile = %s
             ORDER BY created_at DESC
@@ -715,11 +822,14 @@ def get_enquiries_by_date(
             raise HTTPException(400, "sort_order must be asc or desc")
 
         query = """
-            SELECT enquiry_id, name, mobile, email, branch,
-                   enquiry_type, product_interest, pledge_amount,
+            SELECT enquiry_id, salutation, name, mobile, email, branch,
+                   enquiry_type, product_interest, source,
+                   ornament_type, processing_fee, expected_amount,
+                   gross_weight_gms, gold_weight_gms,
+                   purity_percentage, rate, net_amount, pledge_amount,
                    financier_name, financier_branch,
                    lead_state, lead_status, lead_stage,
-                   follow_up_date, created_at
+                   follow_up_date, priority, remarks, created_at
             FROM gold_schema.enquiries
             WHERE 1=1
         """
