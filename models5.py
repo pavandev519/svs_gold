@@ -283,6 +283,7 @@ class EstimationResponse(BaseModel):
 
 
 class EnquiryCreateRequest(BaseModel):
+    salutation: Optional[str] = None
     name: str
     mobile: Optional[str] = None
     email: Optional[EmailStr] = None
@@ -292,9 +293,13 @@ class EnquiryCreateRequest(BaseModel):
     source: Optional[str] = None
     ornament_type: Optional[str] = None
     quantity: Optional[int] = None
+    processing_fee: Optional[Decimal] = None
     expected_amount: Optional[Decimal] = None
+    gross_weight_gms: Optional[Decimal] = None
     gold_weight_gms: Optional[Decimal] = None
     purity_percentage: Optional[Decimal] = None
+    rate: Optional[Decimal] = None
+    net_amount: Optional[Decimal] = None
     pledge_amount: Optional[Decimal] = None
     financier_name: Optional[str] = None
     financier_branch: Optional[str] = None
@@ -313,12 +318,22 @@ class EnquiryCreateResponse(BaseModel):
 
 class EnquiryItem(BaseModel):
     enquiry_id: int
+    salutation: Optional[str] = None
     name: str
     mobile: Optional[str] = None
     email: Optional[EmailStr] = None
     enquiry_type: str
     branch: Optional[str] = None
     product_interest: Optional[str] = None
+    source: Optional[str] = None
+    ornament_type: Optional[str] = None
+    processing_fee: Optional[Decimal] = None
+    expected_amount: Optional[Decimal] = None
+    gross_weight_gms: Optional[Decimal] = None
+    gold_weight_gms: Optional[Decimal] = None
+    purity_percentage: Optional[Decimal] = None
+    rate: Optional[Decimal] = None
+    net_amount: Optional[Decimal] = None
     pledge_amount: Optional[Decimal] = None
     financier_name: Optional[str] = None
     financier_branch: Optional[str] = None
@@ -326,7 +341,39 @@ class EnquiryItem(BaseModel):
     lead_status: Optional[str] = None
     lead_stage: Optional[str] = None
     follow_up_date: Optional[date] = None
+    priority: Optional[str] = None
+    remarks: Optional[str] = None
     created_at: Optional[datetime] = None
+
+
+class EnquiryUpdateRequest(BaseModel):
+    enquiry_id: int
+    salutation: Optional[str] = None
+    name: Optional[str] = None
+    mobile: Optional[str] = None
+    email: Optional[EmailStr] = None
+    branch: Optional[str] = None
+    enquiry_type: Optional[str] = None
+    product_interest: Optional[str] = None
+    source: Optional[str] = None
+    ornament_type: Optional[str] = None
+    quantity: Optional[int] = None
+    processing_fee: Optional[Decimal] = None
+    expected_amount: Optional[Decimal] = None
+    gross_weight_gms: Optional[Decimal] = None
+    gold_weight_gms: Optional[Decimal] = None
+    purity_percentage: Optional[Decimal] = None
+    rate: Optional[Decimal] = None
+    net_amount: Optional[Decimal] = None
+    pledge_amount: Optional[Decimal] = None
+    financier_name: Optional[str] = None
+    financier_branch: Optional[str] = None
+    lead_state: Optional[str] = None
+    lead_status: Optional[str] = None
+    lead_stage: Optional[str] = None
+    follow_up_date: Optional[date] = None
+    priority: Optional[str] = None
+    remarks: Optional[str] = None
 
 
 class EnquiryListResponse(BaseModel):
