@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, validator
+from pydantic import BaseModel, EmailStr, validator, root_validator
 from typing import Optional, List
 from datetime import date, datetime
 from decimal import Decimal
@@ -465,4 +465,111 @@ class PaymentSettlementResponse(BaseModel):
     settlement_id: int
     payment_invoice_id: int
     paid_amount: Decimal
+
+
+# -------------------------------------------------
+# CALCULATION ENTRIES (Weight & Purity Tracking)
+# -------------------------------------------------
+
+class CalcEntryCreateRequest(BaseModel):
+    mobile: str
+    application_id: int
+    invoice_item_id: Optional[int] = None
+    application_number: Optional[str] = None
+    invoice_number: Optional[str] = None
+    entry_date: date
+    
+    # Auto-populated fields
+    wt_before: Optional[Decimal] = None
+    wt_after: Optional[Decimal] = None
+    purity_percentage: Optional[Decimal] = None
+    
+    # Manually entered fields (optional for initial creation)
+    cal_wt_before: Optional[Decimal] = None
+    cal_wt_after: Optional[Decimal] = None
+    cal_purity_percentage: Optional[Decimal] = None
+
+    @validator('wt_before', 'wt_after', 'cal_wt_before', 'cal_wt_after')
+    def calc_weight_non_negative(cls, v):
+        if v is not None and v < 0:
+            raise ValueError('weight values cannot be negative')
+        return v
+
+    @validator('purity_percentage', 'cal_purity_percentage')
+    def calc_purity_valid(cls, v):
+        if v is not None and (v < 0 or v > 100):
+            raise ValueError('purity percentage must be between 0 and 100')
+        return v
+
+    @root_validator(skip_on_failure=True)
+    def calc_weights_valid(cls, values):
+        cal_wt_before = values.get('cal_wt_before')
+        cal_wt_after = values.get('cal_wt_after')
+
+        if cal_wt_before is not None and cal_wt_after is not None and cal_wt_after > cal_wt_before:
+            raise ValueError('cal_wt_after cannot be greater than cal_wt_before')
+
+        return values
+
+
+class CalcEntryUpdateRequest(BaseModel):
+    application_number: Optional[str] = None
+    invoice_number: Optional[str] = None
+    wt_after: Optional[Decimal] = None
+    purity_percentage: Optional[Decimal] = None
+    cal_wt_before: Optional[Decimal] = None
+    cal_wt_after: Optional[Decimal] = None
+    cal_purity_percentage: Optional[Decimal] = None
+
+    @validator('wt_after', 'cal_wt_before', 'cal_wt_after')
+    def update_calc_weight_non_negative(cls, v):
+        if v is not None and v < 0:
+            raise ValueError('calculated weight values cannot be negative')
+        return v
+
+    @validator('purity_percentage', 'cal_purity_percentage')
+    def update_calc_purity_valid(cls, v):
+        if v is not None and (v < 0 or v > 100):
+            raise ValueError('calculated purity percentage must be between 0 and 100')
+        return v
+
+    @root_validator(skip_on_failure=True)
+    def update_calc_weights_valid(cls, values):
+        cal_wt_before = values.get('cal_wt_before')
+        cal_wt_after = values.get('cal_wt_after')
+
+        if cal_wt_before is not None and cal_wt_after is not None and cal_wt_after > cal_wt_before:
+            raise ValueError('cal_wt_after cannot be greater than cal_wt_before')
+
+        return values
+
+
+class CalcEntryResponse(BaseModel):
+    calc_entry_id: int
+    mobile: str
+    application_id: int
+    invoice_item_id: Optional[int] = None
+    application_number: Optional[str] = None
+    invoice_number: Optional[str] = None
+    entry_date: date
+    wt_before: Optional[Decimal] = None
+    wt_after: Optional[Decimal] = None
+    purity_percentage: Optional[Decimal] = None
+    cal_wt_before: Optional[Decimal] = None
+    cal_wt_after: Optional[Decimal] = None
+    cal_purity_percentage: Optional[Decimal] = None
+    weight_after_melting: Optional[Decimal] = None
+    purity: Optional[Decimal] = None
+    fine_weight: Optional[Decimal] = None
+    refinery_weight: Optional[Decimal] = None
+    refinery_purity: Optional[Decimal] = None
+    refinery_fine_weight: Optional[Decimal] = None
+    difference: Optional[Decimal] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CalcEntryListResponse(BaseModel):
+    mobile: str
+    entries: List[CalcEntryResponse]
 
