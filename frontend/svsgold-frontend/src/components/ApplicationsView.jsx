@@ -10,6 +10,8 @@ import ApplicationPreview from './ApplicationPreview'
 import { applicationsAPI, accountsAPI } from '../api/api'
 import { formatDate } from '../utils/validation'
 
+const PAYMENT_ITEM_NAME = 'Melted Gold'
+
 export default function ApplicationsView({
   userIdentifier,
   applications,
@@ -1109,7 +1111,7 @@ function PaymentPdfView({ userIdentifier, applicationId }) {
               {invItems.map((it, i) => (
                 <tr key={i}>
                   <td style={{ ...vl, textAlign: 'center' }}>{i+1}</td>
-                  <td style={vl}>{it.item_name}</td>
+                  <td style={vl}>{PAYMENT_ITEM_NAME}</td>
                   <td style={{ ...vl, textAlign: 'center' }}>{it.weight_before_melting}</td>
                   <td style={{ ...vl, textAlign: 'center' }}>{it.weight_after_melting}</td>
                   <td style={{ ...vl, textAlign: 'center' }}>{it.purity_after_melting}%</td>

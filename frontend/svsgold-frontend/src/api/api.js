@@ -177,4 +177,12 @@ export const estimationsAPI = {
   getByUser: (mobile, branchName) => api.get(`/estimations/by-user?mobile=${encodeURIComponent(mobile)}${branchName ? `&branch_name=${encodeURIComponent(branchName)}` : ''}`)
 }
 
+export const calcEntriesAPI = {
+  createEntry: (data) => api.post('/calc-entries/create', data),
+  getAll: () => api.get('/calc-entries/all'),
+  getByMobile: (mobile) => api.get(`/calc-entries/by-mobile?mobile=${encodeURIComponent(mobile)}`),
+  updateEntry: (calcEntryId, data, mobile) => api.put(`/calc-entries/${calcEntryId}?mobile=${encodeURIComponent(mobile)}`, data),
+  deleteEntry: (calcEntryId, mobile) => api.delete(`/calc-entries/${calcEntryId}?mobile=${encodeURIComponent(mobile)}`)
+}
+
 export default api

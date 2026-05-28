@@ -8,6 +8,13 @@ const USER_ACCOUNTS = {
     isAdmin: true,
     displayName: 'Admin'
   },
+  vinay: {
+    username: 'vinay',
+    password: 'vinnu123',
+    isAdmin: true,
+    isSuperAdmin: true,
+    displayName: 'Vinay'
+  },
   teleuser: {
     username: 'teleuser',
     password: 'tele123',
@@ -68,7 +75,7 @@ export default function LoginPage({ onLoginSuccess }) {
         accountExists: true
       })
     } else {
-      setError('Invalid username or password. Allowed usernames: admin, teleuser, dsnruser, narauser')
+      setError('Invalid username or password. Allowed usernames: admin, vinay, teleuser, dsnruser, narauser')
     }
 
     setLoading(false)

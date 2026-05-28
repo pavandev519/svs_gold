@@ -7,6 +7,8 @@ import {
 import { paymentsAPI, accountsAPI, applicationsAPI } from '../api/api'
 import { formatDate } from '../utils/validation'
 
+const DEFAULT_PAYMENT_ITEM_NAME = 'Melted Gold'
+
 export default function PaymentPage() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -75,7 +77,7 @@ export default function PaymentPage() {
       ? estimationItems.map((item, i) => {
           const netWt = Math.round(((parseFloat(item.gross_weight_gms) || 0) - (parseFloat(item.stone_weight_gms) || 0)) * 100) / 100
           return {
-            id: Date.now() + i, mobile: loggedInMobile, item_name: item.item_name || '',
+            id: Date.now() + i, mobile: loggedInMobile, item_name: DEFAULT_PAYMENT_ITEM_NAME,
             weight_before_melting: netWt || item.gross_weight_gms || 0, weight_after_melting: 0,
             purity_after_melting: item.purity_percentage || 0, gold_rate_per_gm: item.gold_rate_per_gm || 0,
             gross_amount: 0, deduction_percentage: item.deduction_percentage || 0, deductions_amount: 0, net_amount: 0, _savedItemId: null
@@ -196,7 +198,6 @@ export default function PaymentPage() {
     // Step 1 is now just Invoice Items — auto-create invoice first
     if (invoiceItems.length === 0) { setError('Add at least one item'); return }
     for (let i = 0; i < invoiceItems.length; i++) {
-      if (!invoiceItems[i].item_name?.trim()) { setError(`Item ${i+1}: name required`); return }
       const wtBefore = parseFloat(invoiceItems[i].weight_before_melting) || 0
       const wtAfter = parseFloat(invoiceItems[i].weight_after_melting) || 0
       if (wtBefore <= 0) { setError(`Item ${i+1}: weight before melting must be greater than 0`); return }
@@ -207,13 +208,14 @@ export default function PaymentPage() {
     }
     try {
       setLoading(true); setError('')
+      const normalizedItems = invoiceItems.map(item => ({ ...item, item_name: DEFAULT_PAYMENT_ITEM_NAME }))
       const words = numberToWords(Math.round(payableAmount > 0 ? payableAmount : itemsTotal)) + ' Rupees Only'
       await paymentsAPI.createInvoice({ ...invoice, total_net_amount: itemsTotal, amount_in_words: words })
       setInvoice(p => ({ ...p, total_net_amount: itemsTotal, amount_in_words: words }))
 
       // Save items
       const saved = []
-      for (const item of invoiceItems) {
+      for (const item of normalizedItems) {
         const { id, _savedItemId, ...p } = item
         const r = await paymentsAPI.addInvoiceItem(p)
         saved.push({ ...item, _savedItemId: r.data?.invoice_item_id || r.data?.id || null })
@@ -228,7 +230,7 @@ export default function PaymentPage() {
     finally { setLoading(false) }
   }
 
-  const addInvoiceItem = () => setInvoiceItems(prev => [...prev, { id: Date.now(), mobile: loggedInMobile, item_name: '', weight_before_melting: 0, weight_after_melting: 0, purity_after_melting: 0, gold_rate_per_gm: 0, gross_amount: 0, deduction_percentage: 0, deductions_amount: 0, net_amount: 0, _savedItemId: null }])
+  const addInvoiceItem = () => setInvoiceItems(prev => [...prev, { id: Date.now(), mobile: loggedInMobile, item_name: DEFAULT_PAYMENT_ITEM_NAME, weight_before_melting: 0, weight_after_melting: 0, purity_after_melting: 0, gold_rate_per_gm: 0, gross_amount: 0, deduction_percentage: 0, deductions_amount: 0, net_amount: 0, _savedItemId: null }])
   const updateInvoiceItem = (idx, f, v) => setInvoiceItems(prev => {
     const u = [...prev]
     const nextItem = { ...u[idx], [f]: v }
@@ -347,9 +349,9 @@ export default function PaymentPage() {
                   {invoiceItems.length === 0 && <div className="text-center py-10 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-300"><FileText size={40} className="mx-auto text-gray-400 mb-3" /><p className="text-gray-500">No items added yet.</p></div>}
                   {invoiceItems.map((item, idx) => (
                     <div key={item.id || idx} className="bg-gray-50 rounded-xl p-6 space-y-4 border border-gray-100">
-                      <div className="flex items-center justify-between"><h4 className="font-bold text-gray-800">Item {idx+1} {item.item_name && `— ${item.item_name}`}</h4><div className="flex items-center gap-3"><span className="text-sm font-semibold text-green-600">Net: ₹{(item.net_amount || 0).toLocaleString('en-IN', {minimumFractionDigits:2})}</span><button onClick={() => removeInvoiceItem(idx)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={16} /></button></div></div>
+                      <div className="flex items-center justify-between"><h4 className="font-bold text-gray-800">Item {idx+1} — {DEFAULT_PAYMENT_ITEM_NAME}</h4><div className="flex items-center gap-3"><span className="text-sm font-semibold text-green-600">Net: ₹{(item.net_amount || 0).toLocaleString('en-IN', {minimumFractionDigits:2})}</span><button onClick={() => removeInvoiceItem(idx)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={16} /></button></div></div>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div><label className={labelClass}>Item Name *</label><input value={item.item_name} onChange={e => updateInvoiceItem(idx, 'item_name', e.target.value)} className={inputClass} /></div>
+                        <div><label className={labelClass}>Item Name</label><div className={readOnlyClass}>{DEFAULT_PAYMENT_ITEM_NAME}</div></div>
                         <div><label className={labelClass}>Wt Before Melting (g)</label><input type="text" value={item.weight_before_melting} onChange={e => updateInvoiceItem(idx, 'weight_before_melting', e.target.value.replace(/[^0-9.]/g,''))} className={inputClass} /></div>
                         <div>
                           <label className={labelClass}>Wt After Melting (g)</label>
@@ -610,7 +612,7 @@ export default function PaymentPage() {
                         {invoiceItems.map((item, i) => (
                           <tr key={i}>
                             <td style={{ ...vl, textAlign: 'center' }}>{i + 1}</td>
-                            <td style={vl}>{item.item_name}</td>
+                            <td style={vl}>{DEFAULT_PAYMENT_ITEM_NAME}</td>
                             <td style={{ ...vl, textAlign: 'center' }}>{item.weight_before_melting}</td>
                             <td style={{ ...vl, textAlign: 'center' }}>{item.weight_after_melting}</td>
                             <td style={{ ...vl, textAlign: 'center' }}>{item.purity_after_melting}%</td>

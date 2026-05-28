@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { LogOut, Menu, X, FileText, Plus, Settings, Home, Search, Phone, Mail, AlertCircle, UserPlus, Loader, Save, DollarSign, Calculator, Eye, Download, Upload }
+import { LogOut, Menu, X, FileText, Plus, Settings, Home, Search, Phone, Mail, AlertCircle, UserPlus, Loader, Save, DollarSign, Calculator, Eye, Download, Upload, BarChart3 }
     from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import ApplicationForm from '../components/ApplicationForm'
 import ApplicationsView from '../components/ApplicationsView'
 import CreateAccountPage from '../components/CreateAccountPage'
 import EnquirySection from '../components/EnquirySection'
+import CalcEntriesSection from '../components/CalcEntriesSection'
 import { applicationsAPI, accountsAPI, transactionsAPI, estimationsAPI } from '../api/api'
 import { formatDate } from '../utils/validation'
 import * as XLSX from "xlsx";
@@ -15,6 +16,7 @@ export default function Dashboard({ loginData, onLogout }) {
     const navigate = useNavigate()
     const canAccessApplications = loginData?.username !== 'teleuser'
     const canAccessEnquiry = loginData?.isAdmin || loginData?.username === 'teleuser'
+    const isSuperAdmin = loginData?.isSuperAdmin || loginData?.username === 'vinay'
 
     const [sidebarOpen, setSidebarOpen] = useState(true)
     const [currentPage, setCurrentPage] = useState(
@@ -22,6 +24,18 @@ export default function Dashboard({ loginData, onLogout }) {
             ? 'enquiry'
             : 'applications'
     )
+
+    useEffect(() => {
+        if (currentPage === 'calculated-transactions' && !isSuperAdmin) {
+            setCurrentPage(
+                canAccessApplications
+                    ? 'applications'
+                    : canAccessEnquiry
+                        ? 'enquiry'
+                        : 'profile'
+            )
+        }
+    }, [currentPage, isSuperAdmin, canAccessApplications, canAccessEnquiry])
 
     /* ---- Customer Search State ---- */
     const [searchType, setSearchType] = useState('mobile')
@@ -322,6 +336,7 @@ export default function Dashboard({ loginData, onLogout }) {
         ...(canAccessEnquiry ? [{ id: 'enquiry', label: 'Enquiry', icon: Mail, color: 'text-amber-700' }] : []),
         ...(customerFound ? [{ id: 'estimations', label: 'Estimations', icon: Calculator, color: 'text-amber-700' }] : []),
         ...(loginData?.isAdmin ? [{ id: 'transactions', label: 'Transactions', icon: DollarSign, color: 'text-amber-700' }] : []),
+        ...(isSuperAdmin ? [{ id: 'calculated-transactions', label: 'Daily Computation', icon: BarChart3, color: 'text-amber-700' }] : []),
         { id: 'profile', label: 'Profile', icon: Settings, color: 'text-amber-700' }
     ]
 
@@ -769,6 +784,10 @@ export default function Dashboard({ loginData, onLogout }) {
 
                     {currentPage === 'transactions' && (
                         <TransactionsSection customerMobile={customerMobile} />
+                    )}
+
+                    {currentPage === 'calculated-transactions' && isSuperAdmin && (
+                        <CalcEntriesSection customerMobile={customerMobile} />
                     )}
 
                     {currentPage === 'enquiry' && canAccessEnquiry && (
@@ -1517,6 +1536,7 @@ function TransactionsSection({ customerMobile }) {
             return {
                 Invoice: inv?.invoice_no,
                 Date: inv?.invoice_date,
+                Branch: inv?.application_branch || inv?.branch || inv?.place || '',
                 Customer: inv?.customer_name,
                 Mobile: inv?.customer_details?.mobile,
                 Item: i.item_name,
@@ -1900,6 +1920,7 @@ function TransactionsSection({ customerMobile }) {
                         <tr>
                             <th className="sticky top-0 z-10 px-4 py-3 text-left text-xs uppercase tracking-[0.12em]">Invoice</th>
                             <th className="sticky top-0 z-10 px-4 py-3 text-left text-xs uppercase tracking-[0.12em]">Date</th>
+                            <th className="sticky top-0 z-10 px-4 py-3 text-left text-xs uppercase tracking-[0.12em]">Branch</th>
                             <th className="sticky top-0 z-10 px-4 py-3 text-left text-xs uppercase tracking-[0.12em]">Customer</th>
                             <th className="sticky top-0 z-10 px-4 py-3 text-left text-xs uppercase tracking-[0.12em]">Mobile</th>
                             <th className="sticky top-0 z-10 px-4 py-3 text-left text-xs uppercase tracking-[0.12em]">Item</th>
@@ -1917,7 +1938,7 @@ function TransactionsSection({ customerMobile }) {
                     <tbody className="bg-white">
                         {filteredItems.length === 0 ? (
                             <tr>
-                                <td colSpan={13} className="px-4 py-10 text-center text-gray-500">
+                                <td colSpan={14} className="px-4 py-10 text-center text-gray-500">
                                     No transactions found for the selected filters.
                                 </td>
                             </tr>
@@ -1935,6 +1956,7 @@ function TransactionsSection({ customerMobile }) {
                                     <tr key={i.invoice_item_id} className="border-b even:bg-gray-50 hover:bg-gray-100">
                                         <td className="px-4 py-3 whitespace-nowrap">{inv?.invoice_no}</td>
                                         <td className="px-4 py-3 whitespace-nowrap">{inv?.invoice_date}</td>
+                                        <td className="px-4 py-3 whitespace-nowrap">{inv?.application_branch || inv?.branch || inv?.place || '—'}</td>
                                         <td className="px-4 py-3 whitespace-nowrap">{inv?.customer_name}</td>
                                         <td className="px-4 py-3 whitespace-nowrap">{inv?.customer_details?.mobile}</td>
                                         <td className="px-4 py-3 whitespace-nowrap">{i.item_name}</td>
