@@ -25,7 +25,8 @@ from models5 import (
     PaymentDeductionCreateRequest,
     PaymentDeductionResponse,
     PaymentSettlementCreateRequest,
-    PaymentSettlementResponse
+    PaymentSettlementResponse,
+    CalcEntryCreateRequest, CalcEntryUpdateRequest, CalcEntryResponse, CalcEntryListResponse
 )
 
 from gold_calculator import calculate_gold_estimation
@@ -607,6 +608,102 @@ def ensure_enquiries_table(cur):
             ADD COLUMN IF NOT EXISTS priority TEXT,
             ADD COLUMN IF NOT EXISTS remarks TEXT
         """
+    )
+
+
+def ensure_calculation_entries_table(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS gold_schema.calculation_entries (
+            calc_entry_id BIGSERIAL PRIMARY KEY,
+            account_id BIGINT NOT NULL REFERENCES gold_schema.accounts(account_id),
+            application_id BIGINT NOT NULL REFERENCES gold_schema.applications(application_id),
+            invoice_item_id BIGINT NULL REFERENCES gold_schema.payment_invoice_items(invoice_item_id) ON DELETE SET NULL,
+            application_number VARCHAR(50),
+            invoice_number VARCHAR(50),
+            entry_date DATE NOT NULL,
+            mobile VARCHAR(32) NOT NULL,
+            weight_after_melting NUMERIC(18,4) NOT NULL DEFAULT 0,
+            purity NUMERIC(8,4) NOT NULL DEFAULT 0,
+            fine_weight NUMERIC(18,4) GENERATED ALWAYS AS (weight_after_melting * purity / 100) STORED,
+            refinery_weight NUMERIC(18,4),
+            refinery_purity NUMERIC(8,4),
+            refinery_fine_weight NUMERIC(18,4) GENERATED ALWAYS AS (refinery_weight * refinery_purity / 100) STORED,
+            difference NUMERIC(18,4) GENERATED ALWAYS AS (
+                (refinery_weight * refinery_purity / 100) - (weight_after_melting * purity / 100)
+            ) STORED,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE gold_schema.calculation_entries
+            ADD COLUMN IF NOT EXISTS account_id BIGINT,
+            ADD COLUMN IF NOT EXISTS application_id BIGINT,
+            ADD COLUMN IF NOT EXISTS invoice_item_id BIGINT NULL,
+            ADD COLUMN IF NOT EXISTS application_number VARCHAR(50),
+            ADD COLUMN IF NOT EXISTS invoice_number VARCHAR(50),
+            ADD COLUMN IF NOT EXISTS entry_date DATE,
+            ADD COLUMN IF NOT EXISTS mobile VARCHAR(32),
+            ADD COLUMN IF NOT EXISTS weight_after_melting NUMERIC(18,4) DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS purity NUMERIC(8,4) DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS refinery_weight NUMERIC(18,4),
+            ADD COLUMN IF NOT EXISTS refinery_purity NUMERIC(8,4),
+            ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        """
+    )
+    cur.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'fk_calculation_entries_invoice_item'
+                  AND conrelid = 'gold_schema.calculation_entries'::regclass
+            ) THEN
+                ALTER TABLE gold_schema.calculation_entries
+                    ADD CONSTRAINT fk_calculation_entries_invoice_item
+                    FOREIGN KEY (invoice_item_id)
+                    REFERENCES gold_schema.payment_invoice_items(invoice_item_id)
+                    ON DELETE SET NULL;
+            END IF;
+        END $$;
+        """
+    )
+
+
+def calc_entry_response(row):
+    weight_after_melting = row.get("weight_after_melting")
+    purity = row.get("purity")
+    refinery_weight = row.get("refinery_weight")
+    refinery_purity = row.get("refinery_purity")
+    return CalcEntryResponse(
+        calc_entry_id=row["calc_entry_id"],
+        mobile=row["mobile"],
+        application_id=row["application_id"],
+        invoice_item_id=row.get("invoice_item_id"),
+        application_number=row.get("application_number"),
+        invoice_number=row.get("invoice_number"),
+        entry_date=row["entry_date"],
+        wt_before=None,
+        wt_after=weight_after_melting,
+        purity_percentage=purity,
+        cal_wt_before=None,
+        cal_wt_after=refinery_weight,
+        cal_purity_percentage=refinery_purity,
+        weight_after_melting=weight_after_melting,
+        purity=purity,
+        fine_weight=row.get("fine_weight"),
+        refinery_weight=refinery_weight,
+        refinery_purity=refinery_purity,
+        refinery_fine_weight=row.get("refinery_fine_weight"),
+        difference=row.get("difference"),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"]
     )
 
 
@@ -2632,6 +2729,268 @@ def get_customer_summary(
         conn.close()
 
 
+@app.post("/calc-entries/create", response_model=CalcEntryResponse)
+def create_calc_entry(payload: CalcEntryCreateRequest):
+    """Create or update a calculated transaction manual entry."""
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        ensure_calculation_entries_table(cur)
+        conn.commit()
+
+        account_id = get_account_id(cur, payload.mobile)
+        
+        cur.execute(
+            """
+            SELECT calc_entry_id FROM gold_schema.calculation_entries
+            WHERE account_id = %s
+              AND application_id = %s
+              AND entry_date = %s
+              AND invoice_item_id IS NOT DISTINCT FROM %s
+            """,
+            (account_id, payload.application_id, payload.entry_date, payload.invoice_item_id)
+        )
+        existing = cur.fetchone()
+
+        if existing:
+            cur.execute(
+                """
+                UPDATE gold_schema.calculation_entries
+                SET mobile = %s,
+                    invoice_item_id = %s,
+                    application_number = %s,
+                    invoice_number = %s,
+                    weight_after_melting = %s,
+                    purity = %s,
+                    refinery_weight = %s,
+                    refinery_purity = %s,
+                    updated_at = NOW()
+                WHERE calc_entry_id = %s
+                RETURNING *
+                """,
+                (
+                    payload.mobile,
+                    payload.invoice_item_id,
+                    payload.application_number,
+                    payload.invoice_number,
+                    payload.wt_after or 0,
+                    payload.purity_percentage or 0,
+                    payload.cal_wt_after,
+                    payload.cal_purity_percentage,
+                    existing["calc_entry_id"]
+                )
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO gold_schema.calculation_entries (
+                    account_id, application_id, invoice_item_id,
+                    application_number, invoice_number, entry_date, mobile,
+                    weight_after_melting, purity, refinery_weight, refinery_purity
+                )
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING *
+                """,
+                (
+                    account_id,
+                    payload.application_id,
+                    payload.invoice_item_id,
+                    payload.application_number,
+                    payload.invoice_number,
+                    payload.entry_date,
+                    payload.mobile,
+                    payload.wt_after or 0,
+                    payload.purity_percentage or 0,
+                    payload.cal_wt_after,
+                    payload.cal_purity_percentage
+                )
+            )
+
+        row = cur.fetchone()
+        conn.commit()
+        
+        return calc_entry_response(row)
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/calc-entries/all")
+def get_all_calc_entries():
+    """Get all calculated transaction manual entries."""
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        ensure_calculation_entries_table(cur)
+        conn.commit()
+
+        cur.execute(
+            """
+            SELECT calc_entry_id, account_id, application_id, invoice_item_id,
+                   application_number, invoice_number, entry_date, mobile,
+                   weight_after_melting, purity, fine_weight,
+                   refinery_weight, refinery_purity, refinery_fine_weight, difference,
+                   created_at, updated_at
+            FROM gold_schema.calculation_entries
+            ORDER BY entry_date DESC, created_at DESC
+            """
+        )
+        return {"entries": cur.fetchall()}
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/calc-entries/by-mobile", response_model=CalcEntryListResponse)
+def get_calc_entries_by_mobile(mobile: str = Query(...)):
+    """Get all calculation entries for a customer"""
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        ensure_calculation_entries_table(cur)
+        conn.commit()
+
+        account_id = get_account_id(cur, mobile)
+        
+        cur.execute(
+            """
+            SELECT calc_entry_id, account_id, application_id, invoice_item_id,
+                   application_number, invoice_number, entry_date, mobile,
+                   weight_after_melting, purity, fine_weight,
+                   refinery_weight, refinery_purity, refinery_fine_weight, difference,
+                   created_at, updated_at
+            FROM gold_schema.calculation_entries
+            WHERE account_id = %s OR mobile = %s
+            ORDER BY entry_date DESC, created_at DESC
+            """,
+            (account_id, mobile)
+        )
+        
+        rows = cur.fetchall()
+        entries = [calc_entry_response(r) for r in rows]
+        
+        return CalcEntryListResponse(mobile=mobile, entries=entries)
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.put("/calc-entries/{calc_entry_id}", response_model=CalcEntryResponse)
+def update_calc_entry(calc_entry_id: int, payload: CalcEntryUpdateRequest, mobile: str = Query(...)):
+    """Update manual calculation fields for an entry"""
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        ensure_calculation_entries_table(cur)
+        conn.commit()
+
+        account_id = get_account_id(cur, mobile)
+        
+        # Verify entry exists and belongs to this account
+        cur.execute(
+            """
+            SELECT * FROM gold_schema.calculation_entries
+            WHERE calc_entry_id = %s AND account_id = %s
+            """,
+            (calc_entry_id, account_id)
+        )
+        
+        entry = cur.fetchone()
+        if not entry:
+            raise HTTPException(404, "Calculation entry not found")
+        
+        update_data = payload.dict(exclude_unset=True)
+        field_map = {
+            "application_number": "application_number",
+            "invoice_number": "invoice_number",
+            "wt_after": "weight_after_melting",
+            "purity_percentage": "purity",
+            "cal_wt_after": "refinery_weight",
+            "cal_purity_percentage": "refinery_purity"
+        }
+        update_fields = []
+        values = []
+        for field_name, field_value in update_data.items():
+            column_name = field_map.get(field_name)
+            if not column_name:
+                continue
+            update_fields.append(f"{column_name} = %s")
+            values.append(field_value)
+        
+        if not update_fields:
+            raise HTTPException(400, "No fields provided to update")
+        
+        update_fields.append("updated_at = NOW()")
+        values.append(calc_entry_id)
+        
+        cur.execute(
+            f"""
+            UPDATE gold_schema.calculation_entries
+            SET {', '.join(update_fields)}
+            WHERE calc_entry_id = %s
+            RETURNING *
+            """,
+            tuple(values)
+        )
+        
+        updated_entry = cur.fetchone()
+        conn.commit()
+        
+        return calc_entry_response(updated_entry)
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.delete("/calc-entries/{calc_entry_id}")
+def delete_calc_entry(calc_entry_id: int, mobile: str = Query(...)):
+    """Delete a calculation entry"""
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        ensure_calculation_entries_table(cur)
+        conn.commit()
+
+        account_id = get_account_id(cur, mobile)
+        
+        # Verify entry exists and belongs to this account
+        cur.execute(
+            """
+            DELETE FROM gold_schema.calculation_entries
+            WHERE calc_entry_id = %s AND account_id = %s
+            RETURNING calc_entry_id
+            """,
+            (calc_entry_id, account_id)
+        )
+        
+        if not cur.fetchone():
+            raise HTTPException(404, "Calculation entry not found")
+        
+        conn.commit()
+        return {"status": "deleted", "calc_entry_id": calc_entry_id}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
 # @app.get("/transactions/all")
 # def get_transactions(
 #     mobile: str = Query(None),
@@ -2737,6 +3096,8 @@ def get_transactions(
                 pi.payment_invoice_id,
                 pi.account_id as invoice_account_id,
                 pi.application_id,
+                app.application_no,
+                app.place AS application_branch,
                 pi.estimation_id,
                 pi.invoice_no,
                 pi.invoice_date,
@@ -2753,6 +3114,7 @@ def get_transactions(
                 a.email as customer_email
             FROM gold_schema.payment_invoices pi
             LEFT JOIN gold_schema.accounts a ON pi.account_id = a.account_id
+            LEFT JOIN gold_schema.applications app ON pi.application_id = app.application_id
             WHERE {where_clause}
             ORDER BY pi.invoice_date DESC
         """
