@@ -268,9 +268,11 @@ class EstimationItemCreateRequest(BaseModel):
         return v
 
     @validator('deduction_percentage')
-    def deduction_non_negative(cls, v):
-        if v < 0 or v > 100:
-            raise ValueError('deduction_percentage must be between 0 and 100')
+    def deduction_minimum(cls, v):
+        if v is not None and v < 0.5:
+            raise ValueError('Processing fee must be at least 0.5%')
+        if v is not None and v > 100:
+            raise ValueError('Processing fee cannot exceed 100%')
         return v
 
 
@@ -426,6 +428,12 @@ class PaymentInvoiceItemCreateRequest(BaseModel):
     def purity_must_be_positive(cls, v):
         if v <= 0:
             raise ValueError('purity_after_melting must be > 0')
+        return v
+
+    @validator('deduction_percentage')
+    def deduction_must_be_minimum(cls, v):
+        if v is not None and v < 0.5:
+            raise ValueError('Processing fee must be at least 0.5%')
         return v
 
 
