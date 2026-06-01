@@ -147,7 +147,7 @@ export default function EstimationPage() {
       if (!parseFloat(items[i].gross_weight_gms)) { setError(`Item ${i + 1}: gross weight is required`); return false }
       if (!parseFloat(items[i].gold_rate_per_gm)) { setError(`Item ${i + 1}: gold rate is required`); return false }
       if (String(items[i].purity_percentage).includes('.')) { setError(`Item ${i + 1}: purity must be a whole number (no decimals)`); return false }
-      if (!parseFloat(items[i].deduction_percentage) || parseFloat(items[i].deduction_percentage) <= 0) { setError(`Item ${i + 1}: deduction percentage must be greater than 0`); return false }
+      if (!parseFloat(items[i].deduction_percentage) || parseFloat(items[i].deduction_percentage) < 0.5) { setError(`Item ${i + 1}: deduction % must be at least 0.5%`); return false }
     }
     return true
   }
@@ -202,7 +202,8 @@ export default function EstimationPage() {
       })
       setPdfUrl(URL.createObjectURL(new Blob([pdfBytes], { type: 'application/pdf' })))
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to save estimation.')
+      const errorMsg = err.response?.data?.msg || err.response?.data?.message || err.message || 'Failed to save estimation.'
+      setError(errorMsg)
     } finally { setLoading(false); setGeneratingPdf(false); setPreviewLoading(false) }
   }
 
@@ -383,11 +384,23 @@ export default function EstimationPage() {
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div>
                           <label className={labelClass}>Gross Weight (gms) <span className="text-red-500">*</span></label>
-                          <input type="text" value={item.gross_weight_gms} onChange={(e) => updateItem(index, 'gross_weight_gms', e.target.value.replace(/[^0-9.]/g, ''))} className={inputClass} />
+                          <input type="text" value={item.gross_weight_gms} onChange={(e) => {
+                            let val = e.target.value.replace(/[^0-9.]/g, '')
+                            const parts = val.split('.')
+                            if (parts.length > 2) val = parts[0] + '.' + parts.slice(1).join('')
+                            if (parts[1] && parts[1].length > 2) val = parts[0] + '.' + parts[1].slice(0, 2)
+                            updateItem(index, 'gross_weight_gms', val)
+                          }} className={inputClass} />
                         </div>
                         <div>
                           <label className={labelClass}>Stone Weight (gms)</label>
-                          <input type="text" value={item.stone_weight_gms} onChange={(e) => updateItem(index, 'stone_weight_gms', e.target.value.replace(/[^0-9.]/g, ''))} className={inputClass} />
+                          <input type="text" value={item.stone_weight_gms} onChange={(e) => {
+                            let val = e.target.value.replace(/[^0-9.]/g, '')
+                            const parts = val.split('.')
+                            if (parts.length > 2) val = parts[0] + '.' + parts.slice(1).join('')
+                            if (parts[1] && parts[1].length > 2) val = parts[0] + '.' + parts[1].slice(0, 2)
+                            updateItem(index, 'stone_weight_gms', val)
+                          }} className={inputClass} />
                         </div>
                         <div>
                           <label className={labelClass}>Net Weight (gms)</label>
@@ -402,8 +415,22 @@ export default function EstimationPage() {
                           <input type="text" value={item.gold_rate_per_gm} onChange={(e) => updateItem(index, 'gold_rate_per_gm', e.target.value.replace(/[^0-9.]/g, ''))} placeholder="Enter rate" className={inputClass} />
                         </div>
                         <div>
-                          <label className={labelClass}>Deduction %</label>
-                          <input type="text" value={item.deduction_percentage} onChange={(e) => updateItem(index, 'deduction_percentage', e.target.value.replace(/[^0-9.]/g, ''))} className={inputClass} />
+                          <label className={labelClass}>
+                            Deduction %
+                            {parseFloat(item.deduction_percentage) > 0 && parseFloat(item.deduction_percentage) < 0.5 && (
+                              <span className="text-red-500 text-xs ml-2 font-semibold">Min 0.5%</span>
+                            )}
+                          </label>
+                          <input 
+                            type="text" 
+                            value={item.deduction_percentage} 
+                            onChange={(e) => updateItem(index, 'deduction_percentage', e.target.value.replace(/[^0-9.]/g, ''))} 
+                            className={`${inputClass} ${parseFloat(item.deduction_percentage) > 0 && parseFloat(item.deduction_percentage) < 0.5 ? 'border-red-500 border-2' : ''}`}
+                            placeholder="≥ 0.5%"
+                          />
+                          {parseFloat(item.deduction_percentage) > 0 && parseFloat(item.deduction_percentage) < 0.5 && (
+                            <p className="mt-1 text-xs text-red-600">Minimum 0.5% required</p>
+                          )}
                         </div>
                         <div>
                           <label className={labelClass}>Net Amount (₹)</label>

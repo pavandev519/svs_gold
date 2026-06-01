@@ -336,7 +336,7 @@ export default function Dashboard({ loginData, onLogout }) {
         ...(canAccessEnquiry ? [{ id: 'enquiry', label: 'Enquiry', icon: Mail, color: 'text-amber-700' }] : []),
         ...(customerFound ? [{ id: 'estimations', label: 'Estimations', icon: Calculator, color: 'text-amber-700' }] : []),
         ...(loginData?.isAdmin ? [{ id: 'transactions', label: 'Transactions', icon: DollarSign, color: 'text-amber-700' }] : []),
-        ...(isSuperAdmin ? [{ id: 'calculated-transactions', label: 'Daily Computation', icon: BarChart3, color: 'text-amber-700' }] : []),
+        ...(isSuperAdmin ? [{ id: 'calculated-transactions', label: 'Refinery', icon: BarChart3, color: 'text-amber-700' }] : []),
         { id: 'profile', label: 'Profile', icon: Settings, color: 'text-amber-700' }
     ]
 
@@ -1039,7 +1039,7 @@ function ProfileSection({ customerMobile, loginData, onAddCustomer, onSelectExis
             setSuccess('All details updated successfully!')
             // Reload fresh data
             await loadData()
-        } catch (err) { setError(err.response?.data?.message || 'Failed to update account') }
+        } catch (err) { setError(err.response?.data?.msg || err.response?.data?.message || 'Failed to update account') }
         finally { setSaving(false) }
     }
 

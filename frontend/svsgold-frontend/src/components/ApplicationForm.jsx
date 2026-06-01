@@ -800,7 +800,13 @@ export default function ApplicationForm({
               <input
                 type="text"
                 value={ornament.approx_weight_gms}
-                onChange={(e) => updateOrnament(index, 'approx_weight_gms', e.target.value.replace(/[^0-9.]/g, ''))}
+                onChange={(e) => {
+                  let val = e.target.value.replace(/[^0-9.]/g, '')
+                  const parts = val.split('.')
+                  if (parts.length > 2) val = parts[0] + '.' + parts.slice(1).join('')
+                  if (parts[1] && parts[1].length > 2) val = parts[0] + '.' + parts[1].slice(0, 2)
+                  updateOrnament(index, 'approx_weight_gms', val)
+                }}
                 placeholder="Enter weight in gms"
                 className={inputClass}
               />

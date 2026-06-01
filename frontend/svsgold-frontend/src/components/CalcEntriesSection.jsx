@@ -19,7 +19,7 @@ const toNumber = (value) => {
   return Number.isFinite(number) ? number : null
 }
 
-const formatNumber = (value, digits = 4) => {
+const formatNumber = (value, digits = 3) => {
   const number = toNumber(value)
   if (number === null) return ''
   return number.toFixed(digits)
@@ -203,6 +203,47 @@ export default function CalcEntriesSection() {
     })
   }, [rows, mode, mobileInput, period, fromDate, toDate, sortOrder])
 
+  const cumulativeSummary = useMemo(() => {
+    const summary = {
+      weightAfterMelting: 0,
+      purityPercentage: 0,
+      fineWeight: 0,
+      refineryWeight: 0,
+      refineryPurityPercentage: 0,
+      refineryFineWeight: 0,
+      difference: 0
+    }
+
+    if (filteredRows.length === 0) return summary
+
+    filteredRows.forEach((row) => {
+      const wtAfter = toNumber(row.wtAfter) || 0
+      const purity = toNumber(row.purity) || 0
+      const fineWt = calculateFineWeight(row.wtAfter, row.purity) || 0
+
+      const values = manualValues[row.rowKey] || {}
+      const refineryWt = toNumber(values.cal_wt_after ?? row.calcEntry?.refinery_weight ?? row.calcEntry?.cal_wt_after) || 0
+      const refineryPurity = toNumber(values.cal_purity_percentage ?? row.calcEntry?.refinery_purity ?? row.calcEntry?.cal_purity_percentage) || 0
+      const refineryFineWt = calculateFineWeight(refineryWt, refineryPurity) || 0
+
+      summary.weightAfterMelting += wtAfter
+      summary.purityPercentage += purity
+      summary.fineWeight += fineWt
+      summary.refineryWeight += refineryWt
+      summary.refineryPurityPercentage += refineryPurity
+      summary.refineryFineWeight += refineryFineWt
+      summary.difference += calculateDifference(refineryFineWt, fineWt) || 0
+    })
+
+    // Average purity percentages
+    if (filteredRows.length > 0) {
+      summary.purityPercentage = summary.purityPercentage / filteredRows.length
+      summary.refineryPurityPercentage = summary.refineryPurityPercentage / filteredRows.length
+    }
+
+    return summary
+  }, [filteredRows, manualValues])
+
   const exportExcel = () => {
     if (filteredRows.length === 0) {
       setError('No calculated transactions available to export')
@@ -307,7 +348,7 @@ export default function CalcEntriesSection() {
       setSavedKey(row.rowKey)
       window.setTimeout(() => setSavedKey(''), 2500)
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to save calculated transaction')
+      setError(err.response?.data?.msg || err.response?.data?.detail || 'Failed to save calculated transaction')
     } finally {
       setSavingKey('')
     }
@@ -515,6 +556,36 @@ export default function CalcEntriesSection() {
         </div>
       </div>
 
+      {/* Cumulative Summary Container */}
+      <div className="mt-6 bg-white rounded-3xl border border-[#E7D3A4] shadow-sm p-6">
+        <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+          <BarChart3 className="w-5 h-5 text-amber-700" />
+          Refinery Summary
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+          <div className="bg-amber-50 rounded-xl p-4 border border-amber-200">
+            <p className="text-xs text-gray-600 mb-1 font-medium">Weight After Melting</p>
+            <p className="text-xl font-bold text-amber-900">{formatNumber(cumulativeSummary.weightAfterMelting)}</p>
+          </div>
+          <div className="bg-amber-50 rounded-xl p-4 border border-amber-200">
+            <p className="text-xs text-gray-600 mb-1 font-medium">Fine Wt</p>
+            <p className="text-xl font-bold text-amber-900">{formatNumber(cumulativeSummary.fineWeight)}</p>
+          </div>
+          <div className="bg-amber-50 rounded-xl p-4 border border-amber-200">
+            <p className="text-xs text-gray-600 mb-1 font-medium">Refinery Weight</p>
+            <p className="text-xl font-bold text-amber-900">{formatNumber(cumulativeSummary.refineryWeight)}</p>
+          </div>
+          <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
+            <p className="text-xs text-gray-600 mb-1 font-medium">Refinery Fine Wt</p>
+            <p className="text-xl font-bold text-blue-900">{formatNumber(cumulativeSummary.refineryFineWeight)}</p>
+          </div>
+          <div className="bg-indigo-50 rounded-xl p-4 border border-indigo-200">
+            <p className="text-xs text-gray-600 mb-1 font-medium">Difference</p>
+            <p className="text-xl font-bold text-indigo-900">{formatNumber(cumulativeSummary.difference)}</p>
+          </div>
+        </div>
+      </div>
+
       <div className="bg-white rounded-3xl border border-[#E7D3A4] shadow-sm overflow-auto max-h-[68vh]">
         <table className="min-w-[1320px] w-full text-sm divide-y divide-gray-200">
           <thead className="bg-[#B68A2E] text-white">
@@ -562,7 +633,7 @@ export default function CalcEntriesSection() {
                     <td className="px-4 py-3 whitespace-nowrap text-gray-700">{row.invoiceNo}</td>
                     <td className="px-4 py-3 whitespace-nowrap text-gray-700">{row.entryDate || '-'}</td>
                     <td className="px-4 py-3 whitespace-nowrap text-gray-700">{row.branch || '-'}</td>
-                    <td className="px-4 py-3 whitespace-nowrap text-gray-700">{row.wtAfter ?? '-'}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-gray-700">{formatNumber(row.wtAfter) || '-'}</td>
                     <td className="px-4 py-3 whitespace-nowrap text-gray-700">{row.purity ?? '-'}</td>
                     <td className="px-4 py-3 whitespace-nowrap font-semibold text-gray-800">{formatNumber(fineWeight) || '-'}</td>
                     <td className="px-4 py-3">
@@ -571,7 +642,13 @@ export default function CalcEntriesSection() {
                         inputMode="decimal"
                         min="0"
                         value={values.cal_wt_after ?? ''}
-                        onChange={(e) => handleManualChange(row.rowKey, 'cal_wt_after', e.target.value.replace(/[^0-9.]/g, ''))}
+                        onChange={(e) => {
+                          let val = e.target.value.replace(/[^0-9.]/g, '')
+                          const parts = val.split('.')
+                          if (parts.length > 2) val = parts[0] + '.' + parts.slice(1).join('')
+                          if (parts[1] && parts[1].length > 3) val = parts[0] + '.' + parts[1].slice(0, 3)
+                          handleManualChange(row.rowKey, 'cal_wt_after', val)
+                        }}
                         className="w-32 rounded-xl border border-[#D8C08A] bg-white px-3 py-2 outline-none focus:border-[#B67D22]"
                       />
                     </td>
@@ -582,7 +659,13 @@ export default function CalcEntriesSection() {
                         min="0"
                         max="100"
                         value={values.cal_purity_percentage ?? ''}
-                        onChange={(e) => handleManualChange(row.rowKey, 'cal_purity_percentage', e.target.value.replace(/[^0-9.]/g, ''))}
+                        onChange={(e) => {
+                          let val = e.target.value.replace(/[^0-9.]/g, '')
+                          const parts = val.split('.')
+                          if (parts.length > 2) val = parts[0] + '.' + parts.slice(1).join('')
+                          if (parts[1] && parts[1].length > 3) val = parts[0] + '.' + parts[1].slice(0, 3)
+                          handleManualChange(row.rowKey, 'cal_purity_percentage', val)
+                        }}
                         className="w-32 rounded-xl border border-[#D8C08A] bg-white px-3 py-2 outline-none focus:border-[#B67D22]"
                       />
                     </td>

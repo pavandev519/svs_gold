@@ -200,11 +200,12 @@ export default function PaymentPage() {
     for (let i = 0; i < invoiceItems.length; i++) {
       const wtBefore = parseFloat(invoiceItems[i].weight_before_melting) || 0
       const wtAfter = parseFloat(invoiceItems[i].weight_after_melting) || 0
+      const dedPct = parseFloat(invoiceItems[i].deduction_percentage) || 0
       if (wtBefore <= 0) { setError(`Item ${i+1}: weight before melting must be greater than 0`); return }
       if (wtAfter <= 0) { setError(`Item ${i+1}: weight after melting must be greater than 0`); return }
       if (wtAfter > wtBefore) { setError(`Item ${i+1}: weight after melting cannot be greater than weight before melting`); return }
       if (String(invoiceItems[i].purity_after_melting).includes('.')) { setError(`Item ${i+1}: purity must be a whole number (no decimals)`); return }
-      if (!parseFloat(invoiceItems[i].deduction_percentage) || parseFloat(invoiceItems[i].deduction_percentage) <= 0) { setError(`Item ${i+1}: deduction percentage must be greater than 0`); return }
+      if (!dedPct || dedPct < 0.5) { setError(`Item ${i+1}: deduction % must be at least 0.5%`); return }
     }
     try {
       setLoading(true); setError('')
@@ -226,7 +227,7 @@ export default function PaymentPage() {
       setSettlement(prev => ({ ...prev, paid_amount: payableAmount > 0 ? payableAmount : itemsTotal }))
       saveProgress(2, { invoice_no: invoice.invoice_no })
       setStep(2)
-    } catch (err) { setError(err.response?.data?.message || 'Failed to save') }
+    } catch (err) { setError(err.response?.data?.msg || err.response?.data?.message || 'Failed to save') }
     finally { setLoading(false) }
   }
 
@@ -247,7 +248,7 @@ export default function PaymentPage() {
       await paymentsAPI.addSettlement(settlement)
       localStorage.removeItem(`svs_payment_progress_${loggedInMobile}`)
       setAllComplete(true)
-    } catch (err) { setError(err.response?.data?.message || 'Failed to save settlement') }
+    } catch (err) { setError(err.response?.data?.msg || err.response?.data?.message || 'Failed to save settlement') }
     finally { setLoading(false) }
   }
 
@@ -352,13 +353,19 @@ export default function PaymentPage() {
                       <div className="flex items-center justify-between"><h4 className="font-bold text-gray-800">Item {idx+1} — {DEFAULT_PAYMENT_ITEM_NAME}</h4><div className="flex items-center gap-3"><span className="text-sm font-semibold text-green-600">Net: ₹{(item.net_amount || 0).toLocaleString('en-IN', {minimumFractionDigits:2})}</span><button onClick={() => removeInvoiceItem(idx)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={16} /></button></div></div>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div><label className={labelClass}>Item Name</label><div className={readOnlyClass}>{DEFAULT_PAYMENT_ITEM_NAME}</div></div>
-                        <div><label className={labelClass}>Wt Before Melting (g)</label><input type="text" value={item.weight_before_melting} onChange={e => updateInvoiceItem(idx, 'weight_before_melting', e.target.value.replace(/[^0-9.]/g,''))} className={inputClass} /></div>
+                        <div><label className={labelClass}>Wt Before Melting (g)</label><input type="text" value={item.weight_before_melting} onChange={e => { let val = e.target.value.replace(/[^0-9.]/g,''); const parts = val.split('.'); if (parts.length > 2) val = parts[0] + '.' + parts.slice(1).join(''); if (parts[1] && parts[1].length > 2) val = parts[0] + '.' + parts[1].slice(0, 2); updateInvoiceItem(idx, 'weight_before_melting', val) }} className={inputClass} /></div>
                         <div>
                           <label className={labelClass}>Wt After Melting (g)</label>
                           <input
                             type="text"
                             value={item.weight_after_melting}
-                            onChange={e => updateInvoiceItem(idx, 'weight_after_melting', e.target.value.replace(/[^0-9.]/g,''))}
+                            onChange={e => {
+                              let val = e.target.value.replace(/[^0-9.]/g,'')
+                              const parts = val.split('.')
+                              if (parts.length > 2) val = parts[0] + '.' + parts.slice(1).join('')
+                              if (parts[1] && parts[1].length > 2) val = parts[0] + '.' + parts[1].slice(0, 2)
+                              updateInvoiceItem(idx, 'weight_after_melting', val)
+                            }}
                             className={`${inputClass} ${(parseFloat(item.weight_after_melting) || 0) > (parseFloat(item.weight_before_melting) || 0) && (parseFloat(item.weight_before_melting) || 0) > 0 ? 'border-red-400 focus:border-red-500 focus:ring-red-500/10' : ''}`}
                           />
                           {(parseFloat(item.weight_after_melting) || 0) > (parseFloat(item.weight_before_melting) || 0) && (parseFloat(item.weight_before_melting) || 0) > 0 && (
@@ -370,7 +377,24 @@ export default function PaymentPage() {
                         <div><label className={labelClass}>Purity After (%)</label><input type="text" value={item.purity_after_melting} onChange={e => { const v = e.target.value.replace(/[^0-9]/g,''); if (v === '' || parseInt(v) <= 100) updateInvoiceItem(idx, 'purity_after_melting', v) }} className={inputClass} /></div>
                         <div><label className={labelClass}>Gold Rate/gm (₹)</label><input type="text" value={item.gold_rate_per_gm} onChange={e => updateInvoiceItem(idx, 'gold_rate_per_gm', e.target.value.replace(/[^0-9.]/g,''))} className={inputClass} /></div>
                         <div><label className={labelClass}>Gross Amount (₹)</label><div className="px-4 py-3 bg-amber-50 border-2 border-amber-100 rounded-xl text-amber-800 font-semibold">₹{(item.gross_amount || 0).toLocaleString('en-IN', {minimumFractionDigits:2})}</div></div>
-                        <div><label className={labelClass}>Deductions (%)</label><input type="text" value={item.deduction_percentage} onChange={e => updateInvoiceItem(idx, 'deduction_percentage', e.target.value.replace(/[^0-9.]/g,''))} className={inputClass} /></div>
+                        <div>
+                          <label className={labelClass}>
+                            Deductions (%)
+                            {parseFloat(item.deduction_percentage) > 0 && parseFloat(item.deduction_percentage) < 0.5 && (
+                              <span className="text-red-500 text-xs ml-2 font-semibold">Min 0.5%</span>
+                            )}
+                          </label>
+                          <input 
+                            type="text" 
+                            value={item.deduction_percentage} 
+                            onChange={e => updateInvoiceItem(idx, 'deduction_percentage', e.target.value.replace(/[^0-9.]/g,''))} 
+                            className={`${inputClass} ${parseFloat(item.deduction_percentage) > 0 && parseFloat(item.deduction_percentage) < 0.5 ? 'border-red-500 border-2' : ''}`}
+                            placeholder="≥ 0.5%"
+                          />
+                          {parseFloat(item.deduction_percentage) > 0 && parseFloat(item.deduction_percentage) < 0.5 && (
+                            <p className="mt-1 text-xs text-red-600">Minimum 0.5% required</p>
+                          )}
+                        </div>
                       </div>
                       <div className="flex justify-end"><div className="px-6 py-3 bg-green-50 border-2 border-green-200 rounded-xl"><span className="text-xs text-gray-500">Net: </span><span className="font-bold text-green-700 text-lg">₹{(item.net_amount || 0).toLocaleString('en-IN', {minimumFractionDigits:2})}</span></div></div>
                     </div>
