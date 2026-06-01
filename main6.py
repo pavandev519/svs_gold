@@ -611,69 +611,11 @@ def ensure_enquiries_table(cur):
     )
 
 
+
+
 def ensure_calculation_entries_table(cur):
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS gold_schema.calculation_entries (
-            calc_entry_id BIGSERIAL PRIMARY KEY,
-            account_id BIGINT NOT NULL REFERENCES gold_schema.accounts(account_id),
-            application_id BIGINT NOT NULL REFERENCES gold_schema.applications(application_id),
-            invoice_item_id BIGINT NULL REFERENCES gold_schema.payment_invoice_items(invoice_item_id) ON DELETE SET NULL,
-            application_number VARCHAR(50),
-            invoice_number VARCHAR(50),
-            entry_date DATE NOT NULL,
-            mobile VARCHAR(32) NOT NULL,
-            weight_after_melting NUMERIC(18,4) NOT NULL DEFAULT 0,
-            purity NUMERIC(8,4) NOT NULL DEFAULT 0,
-            fine_weight NUMERIC(18,4) GENERATED ALWAYS AS (weight_after_melting * purity / 100) STORED,
-            refinery_weight NUMERIC(18,4),
-            refinery_purity NUMERIC(8,4),
-            refinery_fine_weight NUMERIC(18,4) GENERATED ALWAYS AS (refinery_weight * refinery_purity / 100) STORED,
-            difference NUMERIC(18,4) GENERATED ALWAYS AS (
-                (refinery_weight * refinery_purity / 100) - (weight_after_melting * purity / 100)
-            ) STORED,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-        """
-    )
-    cur.execute(
-        """
-        ALTER TABLE gold_schema.calculation_entries
-            ADD COLUMN IF NOT EXISTS account_id BIGINT,
-            ADD COLUMN IF NOT EXISTS application_id BIGINT,
-            ADD COLUMN IF NOT EXISTS invoice_item_id BIGINT NULL,
-            ADD COLUMN IF NOT EXISTS application_number VARCHAR(50),
-            ADD COLUMN IF NOT EXISTS invoice_number VARCHAR(50),
-            ADD COLUMN IF NOT EXISTS entry_date DATE,
-            ADD COLUMN IF NOT EXISTS mobile VARCHAR(32),
-            ADD COLUMN IF NOT EXISTS weight_after_melting NUMERIC(18,4) DEFAULT 0,
-            ADD COLUMN IF NOT EXISTS purity NUMERIC(8,4) DEFAULT 0,
-            ADD COLUMN IF NOT EXISTS refinery_weight NUMERIC(18,4),
-            ADD COLUMN IF NOT EXISTS refinery_purity NUMERIC(8,4),
-            ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        """
-    )
-    cur.execute(
-        """
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1
-                FROM pg_constraint
-                WHERE conname = 'fk_calculation_entries_invoice_item'
-                  AND conrelid = 'gold_schema.calculation_entries'::regclass
-            ) THEN
-                ALTER TABLE gold_schema.calculation_entries
-                    ADD CONSTRAINT fk_calculation_entries_invoice_item
-                    FOREIGN KEY (invoice_item_id)
-                    REFERENCES gold_schema.payment_invoice_items(invoice_item_id)
-                    ON DELETE SET NULL;
-            END IF;
-        END $$;
-        """
-    )
+    """Table already exists in database - this function is for compatibility"""
+    pass
 
 
 def calc_entry_response(row):
