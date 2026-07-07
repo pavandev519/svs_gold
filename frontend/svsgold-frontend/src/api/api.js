@@ -168,9 +168,25 @@ export const paymentsAPI = {
 }
 
 export const transactionsAPI = {
-  getAll: (mobile, days = 30) => {
-    return api.get(`/transactions/all?mobile=${encodeURIComponent(mobile || '')}&days=${days}`)
+  getAll: (mobile, days = null) => {
+    const params = new URLSearchParams()
+    if (mobile) params.set('mobile', mobile)
+    if (days !== null && days !== undefined && days !== 'all') params.set('days', days)
+    return api.get(`/transactions/all?${params.toString()}`)
   }
+}
+
+export const deletionsAPI = {
+  previewApplications: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/applications?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}&preview=true`),
+  deleteApplications: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/applications?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}`),
+  previewPayments: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/payments?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}&preview=true`),
+  deletePayments: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/payments?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}`),
+  previewInvoices: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/invoices?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}&preview=true`),
+  deleteInvoices: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/invoices?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}`),
+  previewTransactions: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/transactions?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}&preview=true`),
+  deleteTransactions: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/transactions?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}`),
+  previewAll: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/all?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}&preview=true`),
+  deleteAll: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/all?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}`)
 }
 
 export const estimationsAPI = {
