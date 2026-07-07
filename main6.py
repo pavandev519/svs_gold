@@ -878,29 +878,7 @@ def get_enquiries_by_date(
             query += " AND DATE(created_at) >= %s"
             params.append(date_from)
 
-        if date_to:
-            query += " AND DATE(created_at) <= %s"
-            params.append(date_to)
-
-        if enquiry_type:
-            query += " AND enquiry_type = %s"
-            params.append(enquiry_type)
-
-        if branch:
-            query += " AND branch = %s"
-            params.append(branch)
-
-        if mobile:
-            query += " AND mobile = %s"
-            params.append(mobile)
-
-        if follow_up_date:
-            query += " AND follow_up_date = %s"
-            params.append(follow_up_date)
-
-        if lead_state:
-            query += " AND lead_state = %s"
-            params.append(lead_state)
+        
 
         if lead_status:
             query += " AND lead_status = %s"
@@ -2481,6 +2459,371 @@ def add_settlement(payload: PaymentSettlementCreateRequest):
         cur.close()
         conn.close()
 
+
+def ensure_vinay_admin(admin_username: str):
+    if admin_username != 'vinay':
+        raise HTTPException(403, "Only vinay can perform deletion operations")
+
+
+def _fetch_ids(cur, query: str, params=()):
+    cur.execute(query, params)
+    return [row[0] for row in cur.fetchall()]
+
+
+def _count_rows(cur, query: str, params=()):
+    cur.execute(query, params)
+    row = cur.fetchone()
+    return row[0] if row else 0
+
+
+def _fetch_rows(cur, query: str, params=()):
+    cur.execute(query, params)
+    return cur.fetchall()
+
+
+def _sum_column(cur, query: str, params=()):
+    cur.execute(query, params)
+    row = cur.fetchone()
+    value = row[0] if row and row[0] is not None else 0
+    return float(value) if value is not None else 0.0
+
+
+def _delete_by_ids(cur, query: str, ids):
+    if not ids:
+        return 0
+    cur.execute(query, (ids,))
+    return cur.rowcount
+
+
+@app.delete("/deletions/payments")
+def delete_payments(mobile: str = Query(...), admin_username: str = Query(...), preview: bool = Query(False)):
+    ensure_vinay_admin(admin_username)
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        account_id = get_account_id(cur, mobile)
+        invoice_ids = _fetch_ids(cur, "SELECT payment_invoice_id FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+        settlement_ids = _fetch_ids(cur, "SELECT settlement_id FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+
+        if preview:
+            invoice_numbers = _fetch_ids(cur, "SELECT invoice_no FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+            settlement_rows = _fetch_rows(cur, "SELECT payment_mode, paid_amount FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+            settlement_value = round(sum(float(row[1] or 0) for row in settlement_rows), 2)
+            return {
+                "preview": True,
+                "deleted_settlements": len(settlement_rows),
+                "invoice_count": len(invoice_ids),
+                "invoice_numbers": invoice_numbers,
+                "settlement_value": settlement_value,
+                "settlements": [
+                    {
+                        "mode": row[0],
+                        "amount": round(float(row[1] or 0), 2)
+                    }
+                    for row in settlement_rows
+                ]
+            }
+
+        deleted_settlements = _delete_by_ids(cur, "DELETE FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", invoice_ids)
+        conn.commit()
+        return {
+            "deleted_settlements": deleted_settlements,
+            "invoice_count": len(invoice_ids)
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.delete("/deletions/invoices")
+def delete_invoices(mobile: str = Query(...), admin_username: str = Query(...), preview: bool = Query(False)):
+    ensure_vinay_admin(admin_username)
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        account_id = get_account_id(cur, mobile)
+        invoice_ids = _fetch_ids(cur, "SELECT payment_invoice_id FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+        settlement_ids = _fetch_ids(cur, "SELECT settlement_id FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+        item_ids = _fetch_ids(cur, "SELECT invoice_item_id FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+
+        if preview:
+            invoice_numbers = _fetch_ids(cur, "SELECT invoice_no FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+            item_rows = _fetch_rows(cur, "SELECT item_name, net_amount FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+            settlement_rows = _fetch_rows(cur, "SELECT payment_mode, paid_amount FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+            invoice_value = round(sum(float(row[0] or 0) for row in _fetch_rows(cur, "SELECT total_net_amount FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))), 2)
+            settlement_value = round(sum(float(row[1] or 0) for row in settlement_rows), 2)
+            return {
+                "preview": True,
+                "deleted_settlements": len(settlement_rows),
+                "deleted_items": len(item_rows),
+                "deleted_invoices": len(invoice_ids),
+                "invoice_numbers": invoice_numbers,
+                "invoice_value": invoice_value,
+                "settlement_value": settlement_value,
+                "invoice_items": [
+                    {
+                        "name": row[0],
+                        "amount": round(float(row[1] or 0), 2)
+                    }
+                    for row in item_rows
+                ],
+                "settlements": [
+                    {
+                        "mode": row[0],
+                        "amount": round(float(row[1] or 0), 2)
+                    }
+                    for row in settlement_rows
+                ]
+            }
+
+        deleted_settlements = _delete_by_ids(cur, "DELETE FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", invoice_ids)
+        deleted_items = _delete_by_ids(cur, "DELETE FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", invoice_ids)
+        cur.execute("DELETE FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+        deleted_invoices = cur.rowcount
+        conn.commit()
+        return {
+            "deleted_settlements": deleted_settlements,
+            "deleted_items": deleted_items,
+            "deleted_invoices": deleted_invoices
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.delete("/deletions/transactions")
+def delete_transactions(mobile: str = Query(...), admin_username: str = Query(...), preview: bool = Query(False)):
+    ensure_vinay_admin(admin_username)
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        account_id = get_account_id(cur, mobile)
+        invoice_ids = _fetch_ids(cur, "SELECT payment_invoice_id FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+        item_ids = _fetch_ids(cur, "SELECT invoice_item_id FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+        calculation_ids = _fetch_ids(cur, "SELECT calc_entry_id FROM gold_schema.calculation_entries WHERE invoice_item_id = ANY(%s)", (item_ids,)) if item_ids else []
+
+        if preview:
+            invoice_numbers = _fetch_ids(cur, "SELECT invoice_no FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+            item_rows = _fetch_rows(cur, "SELECT item_name, net_amount FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+            settlement_rows = _fetch_rows(cur, "SELECT payment_mode, paid_amount FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+            transaction_value = round(sum(float(row[1] or 0) for row in item_rows), 2)
+            settlement_value = round(sum(float(row[1] or 0) for row in settlement_rows), 2)
+            return {
+                "preview": True,
+                "deleted_calculation_entries": len(calculation_ids),
+                "deleted_settlements": len(settlement_rows),
+                "deleted_items": len(item_rows),
+                "invoice_numbers": invoice_numbers,
+                "transaction_value": transaction_value,
+                "settlement_value": settlement_value,
+                "transaction_items": [
+                    {
+                        "name": row[0],
+                        "amount": round(float(row[1] or 0), 2)
+                    }
+                    for row in item_rows
+                ]
+            }
+
+        deleted_calculations = _delete_by_ids(cur, "DELETE FROM gold_schema.calculation_entries WHERE invoice_item_id = ANY(%s)", item_ids)
+        deleted_settlements = _delete_by_ids(cur, "DELETE FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", invoice_ids)
+        deleted_items = _delete_by_ids(cur, "DELETE FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", invoice_ids)
+        conn.commit()
+        return {
+            "deleted_calculation_entries": deleted_calculations,
+            "deleted_settlements": deleted_settlements,
+            "deleted_items": deleted_items
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.delete("/deletions/applications")
+def delete_applications(mobile: str = Query(...), admin_username: str = Query(...), preview: bool = Query(False)):
+    ensure_vinay_admin(admin_username)
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        account_id = get_account_id(cur, mobile)
+        application_ids = _fetch_ids(cur, "SELECT application_id FROM gold_schema.applications WHERE account_id = %s", (account_id,))
+        invoice_ids = _fetch_ids(cur, "SELECT payment_invoice_id FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+        item_ids = _fetch_ids(cur, "SELECT invoice_item_id FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+
+        if preview:
+            application_numbers = _fetch_ids(cur, "SELECT application_no FROM gold_schema.applications WHERE account_id = %s", (account_id,))
+            ornament_rows = _fetch_rows(cur, "SELECT item_name, quantity, approx_weight_gms FROM gold_schema.ornaments WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else []
+            invoice_numbers = _fetch_ids(cur, "SELECT invoice_no FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+            settlement_rows = _fetch_rows(cur, "SELECT payment_mode, paid_amount FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+            invoice_value = round(sum(float(row[0] or 0) for row in _fetch_rows(cur, "SELECT total_net_amount FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))), 2)
+            settlement_value = round(sum(float(row[1] or 0) for row in settlement_rows), 2)
+            pledge_rows = _fetch_rows(cur, "SELECT pledge_id, pledger_name, financier_name, principal_amount, total_due FROM gold_schema.pledge_details WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else []
+            return {
+                "preview": True,
+                "deleted_application_mappings": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.estimation_application_map WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else 0,
+                "deleted_pledge_details": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.pledge_details WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else 0,
+                "deleted_ornaments": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.ornaments WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else 0,
+                "deleted_calculation_entries": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.calculation_entries WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else 0,
+                "deleted_settlements": len(settlement_rows),
+                "deleted_invoice_items": len(item_ids),
+                "deleted_invoices": len(invoice_ids),
+                "deleted_estimation_items": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.estimation_items WHERE estimation_id IN (SELECT estimation_id FROM gold_schema.estimations WHERE account_id = %s)", (account_id,)),
+                "deleted_estimations": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.estimations WHERE account_id = %s", (account_id,)),
+                "deleted_applications": len(application_ids),
+                "application_numbers": application_numbers,
+                "ornaments": [
+                    {
+                        "name": row[0],
+                        "quantity": row[1],
+                        "weight_gms": round(float(row[2] or 0), 3)
+                    }
+                    for row in ornament_rows
+                ],
+                "invoice_numbers": invoice_numbers,
+                "invoice_value": invoice_value,
+                "settlement_value": settlement_value,
+                "pledges": [
+                    {
+                        "pledge_id": row[0],
+                        "pledger_name": row[1],
+                        "financier_name": row[2],
+                        "principal_amount": float(row[3]) if row[3] is not None else 0.0,
+                        "total_due": float(row[4]) if row[4] is not None else 0.0
+                    }
+                    for row in pledge_rows
+                ]
+            }
+
+        deleted_application_maps = _delete_by_ids(cur, "DELETE FROM gold_schema.estimation_application_map WHERE application_id = ANY(%s)", application_ids)
+        deleted_pledge = _delete_by_ids(cur, "DELETE FROM gold_schema.pledge_details WHERE application_id = ANY(%s)", application_ids)
+        deleted_ornaments = _delete_by_ids(cur, "DELETE FROM gold_schema.ornaments WHERE application_id = ANY(%s)", application_ids)
+        deleted_calc_entries = _delete_by_ids(cur, "DELETE FROM gold_schema.calculation_entries WHERE application_id = ANY(%s)", application_ids)
+        deleted_settlements = _delete_by_ids(cur, "DELETE FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", invoice_ids)
+        deleted_items = _delete_by_ids(cur, "DELETE FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", invoice_ids)
+        deleted_invoices = 0
+        if invoice_ids:
+            cur.execute("DELETE FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+            deleted_invoices = cur.rowcount
+
+        deleted_estimation_items = _delete_by_ids(cur, "DELETE FROM gold_schema.estimation_items WHERE estimation_id IN (SELECT estimation_id FROM gold_schema.estimations WHERE account_id = %s)", (account_id,))
+        deleted_estimations = 0
+        cur.execute("DELETE FROM gold_schema.estimations WHERE account_id = %s", (account_id,))
+        deleted_estimations = cur.rowcount
+        deleted_applications = 0
+        if application_ids:
+            cur.execute("DELETE FROM gold_schema.applications WHERE account_id = %s", (account_id,))
+            deleted_applications = cur.rowcount
+
+        conn.commit()
+        return {
+            "deleted_application_mappings": deleted_application_maps,
+            "deleted_pledge_details": deleted_pledge,
+            "deleted_ornaments": deleted_ornaments,
+            "deleted_calculation_entries": deleted_calc_entries,
+            "deleted_settlements": deleted_settlements,
+            "deleted_invoice_items": deleted_items,
+            "deleted_invoices": deleted_invoices,
+            "deleted_estimation_items": deleted_estimation_items,
+            "deleted_estimations": deleted_estimations,
+            "deleted_applications": deleted_applications
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.delete("/deletions/all")
+def delete_all_records(mobile: str = Query(...), admin_username: str = Query(...), preview: bool = Query(False)):
+    ensure_vinay_admin(admin_username)
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        account_id = get_account_id(cur, mobile)
+        application_ids = _fetch_ids(cur, "SELECT application_id FROM gold_schema.applications WHERE account_id = %s", (account_id,))
+        invoice_ids = _fetch_ids(cur, "SELECT payment_invoice_id FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+        item_ids = _fetch_ids(cur, "SELECT invoice_item_id FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+
+        if preview:
+            application_numbers = _fetch_ids(cur, "SELECT application_no FROM gold_schema.applications WHERE account_id = %s", (account_id,))
+            ornament_rows = _fetch_rows(cur, "SELECT item_name, quantity, approx_weight_gms FROM gold_schema.ornaments WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else []
+            invoice_numbers = _fetch_ids(cur, "SELECT invoice_no FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+            item_rows = _fetch_rows(cur, "SELECT item_name, net_amount FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+            settlement_rows = _fetch_rows(cur, "SELECT payment_mode, paid_amount FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+            invoice_value = round(sum(float(row[0] or 0) for row in _fetch_rows(cur, "SELECT total_net_amount FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))), 2)
+            settlement_value = round(sum(float(row[1] or 0) for row in settlement_rows), 2)
+            transaction_value = round(sum(float(row[1] or 0) for row in item_rows), 2)
+            return {
+                "preview": True,
+                "deleted_application_mappings": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.estimation_application_map WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else 0,
+                "deleted_pledge_details": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.pledge_details WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else 0,
+                "deleted_ornaments": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.ornaments WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else 0,
+                "deleted_calculation_entries_by_app": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.calculation_entries WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else 0,
+                "deleted_calculation_entries_by_item": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.calculation_entries WHERE invoice_item_id = ANY(%s)", (item_ids,)) if item_ids else 0,
+                "deleted_settlements": len(settlement_rows),
+                "deleted_invoice_items": len(item_rows),
+                "deleted_invoices": len(invoice_ids),
+                "deleted_estimation_items": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.estimation_items WHERE estimation_id IN (SELECT estimation_id FROM gold_schema.estimations WHERE account_id = %s)", (account_id,)),
+                "deleted_estimations": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.estimations WHERE account_id = %s", (account_id,)),
+                "deleted_applications": len(application_ids),
+                "application_numbers": application_numbers,
+                "ornaments": [
+                    {
+                        "name": row[0],
+                        "quantity": row[1],
+                        "weight_gms": round(float(row[2] or 0), 3)
+                    }
+                    for row in ornament_rows
+                ],
+                "invoice_numbers": invoice_numbers,
+                "invoice_value": invoice_value,
+                "settlement_value": settlement_value,
+                "transaction_value": transaction_value,
+                "transaction_items": [
+                    {
+                        "name": row[0],
+                        "amount": round(float(row[1] or 0), 2)
+                    }
+                    for row in item_rows
+                ]
+            }
+
+        deleted_application_maps = _delete_by_ids(cur, "DELETE FROM gold_schema.estimation_application_map WHERE application_id = ANY(%s)", application_ids)
+        deleted_pledge = _delete_by_ids(cur, "DELETE FROM gold_schema.pledge_details WHERE application_id = ANY(%s)", application_ids)
+        deleted_ornaments = _delete_by_ids(cur, "DELETE FROM gold_schema.ornaments WHERE application_id = ANY(%s)", application_ids)
+        deleted_calc_entries_by_app = _delete_by_ids(cur, "DELETE FROM gold_schema.calculation_entries WHERE application_id = ANY(%s)", application_ids)
+        deleted_calculations_by_item = _delete_by_ids(cur, "DELETE FROM gold_schema.calculation_entries WHERE invoice_item_id = ANY(%s)", item_ids)
+        deleted_settlements = _delete_by_ids(cur, "DELETE FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", invoice_ids)
+        deleted_items = _delete_by_ids(cur, "DELETE FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", invoice_ids)
+        deleted_invoices = 0
+        if invoice_ids:
+            cur.execute("DELETE FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+            deleted_invoices = cur.rowcount
+        deleted_estimation_items = _delete_by_ids(cur, "DELETE FROM gold_schema.estimation_items WHERE estimation_id IN (SELECT estimation_id FROM gold_schema.estimations WHERE account_id = %s)", (account_id,))
+        deleted_estimations = 0
+        cur.execute("DELETE FROM gold_schema.estimations WHERE account_id = %s", (account_id,))
+        deleted_estimations = cur.rowcount
+        deleted_applications = 0
+        if application_ids:
+            cur.execute("DELETE FROM gold_schema.applications WHERE account_id = %s", (account_id,))
+            deleted_applications = cur.rowcount
+
+        conn.commit()
+        return {
+            "deleted_application_mappings": deleted_application_maps,
+            "deleted_pledge_details": deleted_pledge,
+            "deleted_ornaments": deleted_ornaments,
+            "deleted_calculation_entries_by_app": deleted_calc_entries_by_app,
+            "deleted_calculation_entries_by_item": deleted_calculations_by_item,
+            "deleted_settlements": deleted_settlements,
+            "deleted_invoice_items": deleted_items,
+            "deleted_invoices": deleted_invoices,
+            "deleted_estimation_items": deleted_estimation_items,
+            "deleted_estimations": deleted_estimations,
+            "deleted_applications": deleted_applications
+        }
+    finally:
+        cur.close()
+        conn.close()
 
 
 @app.get("/branches")
