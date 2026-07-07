@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { LogOut, Menu, X, FileText, Plus, Settings, Home, Search, Phone, Mail, AlertCircle, UserPlus, Loader, Save, DollarSign, Calculator, Eye, Download, Upload, BarChart3 }
+import { LogOut, Menu, X, FileText, Plus, Settings, Home, Search, Phone, Mail, AlertCircle, UserPlus, Loader, Save, DollarSign, Calculator, Eye, Download, Upload, BarChart3, Trash2 }
     from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import ApplicationForm from '../components/ApplicationForm'
 import ApplicationsView from '../components/ApplicationsView'
 import CreateAccountPage from '../components/CreateAccountPage'
+import DeleteSection from '../components/DeleteSection'
 import EnquirySection from '../components/EnquirySection'
 import CalcEntriesSection from '../components/CalcEntriesSection'
 import { applicationsAPI, accountsAPI, transactionsAPI, estimationsAPI } from '../api/api'
@@ -27,6 +28,16 @@ export default function Dashboard({ loginData, onLogout }) {
 
     useEffect(() => {
         if (currentPage === 'calculated-transactions' && !isSuperAdmin) {
+            setCurrentPage(
+                canAccessApplications
+                    ? 'applications'
+                    : canAccessEnquiry
+                        ? 'enquiry'
+                        : 'profile'
+            )
+        }
+
+        if (currentPage === 'deletions' && !isSuperAdmin) {
             setCurrentPage(
                 canAccessApplications
                     ? 'applications'
@@ -337,6 +348,7 @@ export default function Dashboard({ loginData, onLogout }) {
         ...(customerFound ? [{ id: 'estimations', label: 'Estimations', icon: Calculator, color: 'text-amber-700' }] : []),
         ...(loginData?.isAdmin ? [{ id: 'transactions', label: 'Transactions', icon: DollarSign, color: 'text-amber-700' }] : []),
         ...(isSuperAdmin ? [{ id: 'calculated-transactions', label: 'Refinery', icon: BarChart3, color: 'text-amber-700' }] : []),
+        ...(isSuperAdmin ? [{ id: 'deletions', label: 'Deletions', icon: Trash2, color: 'text-amber-700' }] : []),
         { id: 'profile', label: 'Profile', icon: Settings, color: 'text-amber-700' }
     ]
 
@@ -784,6 +796,10 @@ export default function Dashboard({ loginData, onLogout }) {
 
                     {currentPage === 'transactions' && (
                         <TransactionsSection customerMobile={customerMobile} />
+                    )}
+
+                    {currentPage === 'deletions' && isSuperAdmin && (
+                        <DeleteSection />
                     )}
 
                     {currentPage === 'calculated-transactions' && isSuperAdmin && (
@@ -1459,7 +1475,9 @@ function TransactionsSection({ customerMobile }) {
                 const inv = invoices.find(
                     (i) => i.payment_invoice_id === item.payment_invoice_id
                 );
-                return inv && new Date(inv.invoice_date) >= cutoff;
+                if (!inv || !inv.invoice_date) return false;
+                const invDate = new Date(inv.invoice_date + 'T00:00:00');
+                return invDate >= cutoff;
             });
         }
 
@@ -1468,10 +1486,10 @@ function TransactionsSection({ customerMobile }) {
                 const inv = invoices.find(
                     (i) => i.payment_invoice_id === item.payment_invoice_id
                 );
-                if (!inv) return false;
+                if (!inv || !inv.invoice_date) return false;
 
-                const d = new Date(inv.invoice_date);
-                return d >= new Date(fromDate) && d <= new Date(toDate);
+                const invDateStr = inv.invoice_date.toString().slice(0, 10);
+                return invDateStr >= fromDate && invDateStr <= toDate;
             });
         }
 
