@@ -13,7 +13,7 @@ from models5 import (
     ApplicationListItem, ApplicationListResponse,
     OrnamentCreateRequest, OrnamentCreateResponse,
     EstimationItemCreateRequest, EstimationResponse,
-    EnquiryCreateRequest, EnquiryCreateResponse, EnquiryItem, EnquiryListResponse,
+    EnquiryCreateRequest, EnquiryCreateResponse, EnquiryItem, EnquiryListResponse, EnquiryUpdateRequest,
     PledgeDetailsCreateRequest, PledgeDetailsResponse,
     AddressCreateRequest,
     BankAccountCreateRequest,
@@ -25,7 +25,8 @@ from models5 import (
     PaymentDeductionCreateRequest,
     PaymentDeductionResponse,
     PaymentSettlementCreateRequest,
-    PaymentSettlementResponse
+    PaymentSettlementResponse,
+    CalcEntryCreateRequest, CalcEntryUpdateRequest, CalcEntryResponse, CalcEntryListResponse
 )
 
 from gold_calculator import calculate_gold_estimation
@@ -552,6 +553,7 @@ def ensure_enquiries_table(cur):
         CREATE TABLE IF NOT EXISTS gold_schema.enquiries (
             enquiry_id SERIAL PRIMARY KEY,
             account_id INT NULL,
+            salutation TEXT,
             name TEXT NOT NULL,
             mobile VARCHAR(32),
             email TEXT,
@@ -561,9 +563,13 @@ def ensure_enquiries_table(cur):
             source TEXT,
             ornament_type TEXT,
             quantity INT,
+            processing_fee NUMERIC(5,2),
             expected_amount NUMERIC(18,2),
+            gross_weight_gms NUMERIC(18,4),
             gold_weight_gms NUMERIC(18,4),
             purity_percentage NUMERIC(5,2),
+            rate NUMERIC(18,2),
+            net_amount NUMERIC(18,2),
             pledge_amount NUMERIC(18,2),
             financier_name TEXT,
             financier_branch TEXT,
@@ -580,15 +586,66 @@ def ensure_enquiries_table(cur):
     cur.execute(
         """
         ALTER TABLE gold_schema.enquiries
+            ADD COLUMN IF NOT EXISTS salutation TEXT,
             ADD COLUMN IF NOT EXISTS ornament_type TEXT,
             ADD COLUMN IF NOT EXISTS quantity INT,
+            ADD COLUMN IF NOT EXISTS processing_fee NUMERIC(5,2),
+            ADD COLUMN IF NOT EXISTS expected_amount NUMERIC(18,2),
+            ADD COLUMN IF NOT EXISTS gross_weight_gms NUMERIC(18,4),
+            ADD COLUMN IF NOT EXISTS gold_weight_gms NUMERIC(18,4),
+            ADD COLUMN IF NOT EXISTS purity_percentage NUMERIC(5,2),
+            ADD COLUMN IF NOT EXISTS rate NUMERIC(18,2),
+            ADD COLUMN IF NOT EXISTS net_amount NUMERIC(18,2),
             ADD COLUMN IF NOT EXISTS pledge_amount NUMERIC(18,2),
             ADD COLUMN IF NOT EXISTS financier_name TEXT,
             ADD COLUMN IF NOT EXISTS financier_branch TEXT,
+            ADD COLUMN IF NOT EXISTS source TEXT,
+            ADD COLUMN IF NOT EXISTS product_interest TEXT,
             ADD COLUMN IF NOT EXISTS lead_state TEXT,
             ADD COLUMN IF NOT EXISTS lead_status TEXT,
-            ADD COLUMN IF NOT EXISTS lead_stage TEXT
+            ADD COLUMN IF NOT EXISTS lead_stage TEXT,
+            ADD COLUMN IF NOT EXISTS follow_up_date DATE,
+            ADD COLUMN IF NOT EXISTS priority TEXT,
+            ADD COLUMN IF NOT EXISTS remarks TEXT
         """
+    )
+
+
+
+
+def ensure_calculation_entries_table(cur):
+    """Table already exists in database - this function is for compatibility"""
+    pass
+
+
+def calc_entry_response(row):
+    weight_after_melting = row.get("weight_after_melting")
+    purity = row.get("purity")
+    refinery_weight = row.get("refinery_weight")
+    refinery_purity = row.get("refinery_purity")
+    return CalcEntryResponse(
+        calc_entry_id=row["calc_entry_id"],
+        mobile=row["mobile"],
+        application_id=row["application_id"],
+        invoice_item_id=row.get("invoice_item_id"),
+        application_number=row.get("application_number"),
+        invoice_number=row.get("invoice_number"),
+        entry_date=row["entry_date"],
+        wt_before=None,
+        wt_after=weight_after_melting,
+        purity_percentage=purity,
+        cal_wt_before=None,
+        cal_wt_after=refinery_weight,
+        cal_purity_percentage=refinery_purity,
+        weight_after_melting=weight_after_melting,
+        purity=purity,
+        fine_weight=row.get("fine_weight"),
+        refinery_weight=refinery_weight,
+        refinery_purity=refinery_purity,
+        refinery_fine_weight=row.get("refinery_fine_weight"),
+        difference=row.get("difference"),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"]
     )
 
 
@@ -612,18 +669,21 @@ def create_enquiry(payload: EnquiryCreateRequest):
         cur.execute(
             """
             INSERT INTO gold_schema.enquiries (
-                account_id, name, mobile, email, branch,
+                account_id, salutation, name, mobile, email, branch,
                 enquiry_type, product_interest, source,
                 ornament_type, quantity,
-                expected_amount, gold_weight_gms, purity_percentage,
+                processing_fee, expected_amount,
+                gross_weight_gms, gold_weight_gms,
+                purity_percentage, rate, net_amount,
                 pledge_amount, financier_name, financier_branch,
                 lead_state, lead_status, lead_stage,
                 follow_up_date, priority, remarks
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING enquiry_id
             """,
             (
                 account_id,
+                payload.salutation,
                 payload.name,
                 payload.mobile,
                 payload.email,
@@ -633,9 +693,13 @@ def create_enquiry(payload: EnquiryCreateRequest):
                 payload.source,
                 payload.ornament_type,
                 payload.quantity,
+                payload.processing_fee,
                 payload.expected_amount,
+                payload.gross_weight_gms,
                 payload.gold_weight_gms,
                 payload.purity_percentage,
+                payload.rate,
+                payload.net_amount,
                 payload.pledge_amount,
                 payload.financier_name,
                 payload.financier_branch,
@@ -661,6 +725,84 @@ def create_enquiry(payload: EnquiryCreateRequest):
         conn.close()
 
 
+@app.put("/enquiries/update", response_model=EnquiryCreateResponse)
+def update_enquiry(payload: EnquiryUpdateRequest):
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        ensure_enquiries_table(cur)
+
+        cur.execute(
+            "SELECT enquiry_id FROM gold_schema.enquiries WHERE enquiry_id = %s",
+            (payload.enquiry_id,)
+        )
+        if not cur.fetchone():
+            raise HTTPException(404, "Enquiry not found")
+
+        account_id = None
+        if payload.mobile:
+            cur.execute(
+                "SELECT account_id FROM gold_schema.accounts WHERE mobile = %s LIMIT 1",
+                (payload.mobile,)
+            )
+            row = cur.fetchone()
+            if row:
+                account_id = row[0]
+
+        update_data = payload.dict(exclude_unset=True)
+        update_data.pop("enquiry_id", None)
+        update_data["account_id"] = account_id
+
+        if not update_data:
+            raise HTTPException(400, "No data provided to update")
+
+        allowed_fields = {
+            "account_id", "salutation", "name", "mobile", "email", "branch",
+            "enquiry_type", "product_interest", "source",
+            "ornament_type", "quantity", "processing_fee",
+            "expected_amount", "gross_weight_gms", "gold_weight_gms",
+            "purity_percentage", "rate", "net_amount", "pledge_amount",
+            "financier_name", "financier_branch", "lead_state",
+            "lead_status", "lead_stage", "follow_up_date",
+            "priority", "remarks"
+        }
+
+        set_clauses = []
+        values = []
+        for field_name, field_value in update_data.items():
+            if field_name not in allowed_fields:
+                continue
+            set_clauses.append(f"{field_name} = %s")
+            values.append(field_value)
+
+        if not set_clauses:
+            raise HTTPException(400, "No valid fields provided to update")
+
+        values.append(payload.enquiry_id)
+        cur.execute(
+            f"""
+            UPDATE gold_schema.enquiries
+            SET {', '.join(set_clauses)}
+            WHERE enquiry_id = %s
+            """,
+            tuple(values)
+        )
+        conn.commit()
+        return {
+            "enquiry_id": payload.enquiry_id,
+            "status": "updated"
+        }
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
 @app.get("/enquiries/by-mobile", response_model=EnquiryListResponse)
 def get_enquiries_by_mobile(mobile: str = Query(None, description="Mobile number to filter enquiries")):
     if not mobile:
@@ -672,10 +814,14 @@ def get_enquiries_by_mobile(mobile: str = Query(None, description="Mobile number
         ensure_enquiries_table(cur)
         cur.execute(
             """
-            SELECT enquiry_id, name, mobile, email, branch,
-                   enquiry_type, product_interest, pledge_amount,
+            SELECT enquiry_id, salutation, name, mobile, email, branch,
+                   enquiry_type, product_interest, source,
+                   ornament_type, processing_fee, expected_amount,
+                   gross_weight_gms, gold_weight_gms,
+                   purity_percentage, rate, net_amount, pledge_amount,
                    financier_name, financier_branch,
-                   lead_state, lead_status, lead_stage, created_at
+                   lead_state, lead_status, lead_stage,
+                   follow_up_date, priority, remarks, created_at
             FROM gold_schema.enquiries
             WHERE mobile = %s
             ORDER BY created_at DESC
@@ -715,11 +861,14 @@ def get_enquiries_by_date(
             raise HTTPException(400, "sort_order must be asc or desc")
 
         query = """
-            SELECT enquiry_id, name, mobile, email, branch,
-                   enquiry_type, product_interest, pledge_amount,
+            SELECT enquiry_id, salutation, name, mobile, email, branch,
+                   enquiry_type, product_interest, source,
+                   ornament_type, processing_fee, expected_amount,
+                   gross_weight_gms, gold_weight_gms,
+                   purity_percentage, rate, net_amount, pledge_amount,
                    financier_name, financier_branch,
                    lead_state, lead_status, lead_stage,
-                   follow_up_date, created_at
+                   follow_up_date, priority, remarks, created_at
             FROM gold_schema.enquiries
             WHERE 1=1
         """
@@ -729,29 +878,7 @@ def get_enquiries_by_date(
             query += " AND DATE(created_at) >= %s"
             params.append(date_from)
 
-        if date_to:
-            query += " AND DATE(created_at) <= %s"
-            params.append(date_to)
-
-        if enquiry_type:
-            query += " AND enquiry_type = %s"
-            params.append(enquiry_type)
-
-        if branch:
-            query += " AND branch = %s"
-            params.append(branch)
-
-        if mobile:
-            query += " AND mobile = %s"
-            params.append(mobile)
-
-        if follow_up_date:
-            query += " AND follow_up_date = %s"
-            params.append(follow_up_date)
-
-        if lead_state:
-            query += " AND lead_state = %s"
-            params.append(lead_state)
+        
 
         if lead_status:
             query += " AND lead_status = %s"
@@ -2333,6 +2460,466 @@ def add_settlement(payload: PaymentSettlementCreateRequest):
         conn.close()
 
 
+def ensure_vinay_admin(admin_username: str):
+    if admin_username != 'vinay':
+        raise HTTPException(403, "Only vinay can perform deletion operations")
+
+
+def _fetch_ids(cur, query: str, params=()):
+    cur.execute(query, params)
+    return [row[0] for row in cur.fetchall()]
+
+
+def _count_rows(cur, query: str, params=()):
+    cur.execute(query, params)
+    row = cur.fetchone()
+    return row[0] if row else 0
+
+
+def _fetch_rows(cur, query: str, params=()):
+    cur.execute(query, params)
+    return cur.fetchall()
+
+
+def _sum_column(cur, query: str, params=()):
+    cur.execute(query, params)
+    row = cur.fetchone()
+    value = row[0] if row and row[0] is not None else 0
+    return float(value) if value is not None else 0.0
+
+
+def _delete_by_ids(cur, query: str, ids):
+    if not ids:
+        return 0
+    cur.execute(query, (ids,))
+    return cur.rowcount
+
+
+@app.delete("/deletions/payments")
+def delete_payments(mobile: str = Query(...), admin_username: str = Query(...), preview: bool = Query(False), application_id: int = Query(None)):
+    ensure_vinay_admin(admin_username)
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        account_id = get_account_id(cur, mobile)
+        if application_id:
+            invoice_ids = _fetch_ids(cur, "SELECT payment_invoice_id FROM gold_schema.payment_invoices WHERE account_id = %s AND application_id = %s", (account_id, application_id))
+        else:
+            invoice_ids = _fetch_ids(cur, "SELECT payment_invoice_id FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+        settlement_ids = _fetch_ids(cur, "SELECT settlement_id FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+
+        if preview:
+            if application_id:
+                invoice_numbers = _fetch_ids(cur, "SELECT invoice_no FROM gold_schema.payment_invoices WHERE account_id = %s AND application_id = %s", (account_id, application_id))
+            else:
+                invoice_numbers = _fetch_ids(cur, "SELECT invoice_no FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+            settlement_rows = _fetch_rows(cur, "SELECT payment_mode, paid_amount FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+            settlement_value = round(sum(float(row[1] or 0) for row in settlement_rows), 2)
+            return {
+                "preview": True,
+                "deleted_settlements": len(settlement_rows),
+                "invoice_count": len(invoice_ids),
+                "invoice_numbers": invoice_numbers,
+                "settlement_value": settlement_value,
+                "settlements": [
+                    {
+                        "mode": row[0],
+                        "amount": round(float(row[1] or 0), 2)
+                    }
+                    for row in settlement_rows
+                ]
+            }
+
+        deleted_settlements = _delete_by_ids(cur, "DELETE FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", invoice_ids)
+        conn.commit()
+        return {
+            "deleted_settlements": deleted_settlements,
+            "invoice_count": len(invoice_ids)
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.delete("/deletions/invoices")
+def delete_invoices(
+    mobile: str = Query(None),
+    admin_username: str = Query(...),
+    preview: bool = Query(False),
+    application_id: int = Query(None),
+    invoice_no: str = Query(None)
+):
+    ensure_vinay_admin(admin_username)
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        invoice_no = invoice_no.strip() if invoice_no else None
+
+        if invoice_no:
+            if mobile:
+                account_id = get_account_id(cur, mobile)
+                if application_id:
+                    invoice_ids = _fetch_ids(cur, "SELECT payment_invoice_id FROM gold_schema.payment_invoices WHERE account_id = %s AND application_id = %s AND invoice_no = %s", (account_id, application_id, invoice_no))
+                else:
+                    invoice_ids = _fetch_ids(cur, "SELECT payment_invoice_id FROM gold_schema.payment_invoices WHERE account_id = %s AND invoice_no = %s", (account_id, invoice_no))
+            else:
+                invoice_ids = _fetch_ids(cur, "SELECT payment_invoice_id FROM gold_schema.payment_invoices WHERE invoice_no = %s", (invoice_no,))
+                account_rows = _fetch_rows(cur, "SELECT DISTINCT account_id FROM gold_schema.payment_invoices WHERE invoice_no = %s", (invoice_no,))
+                account_id = account_rows[0][0] if account_rows else None
+        else:
+            if not mobile:
+                raise HTTPException(status_code=400, detail="Mobile or invoice number is required")
+            account_id = get_account_id(cur, mobile)
+            if application_id:
+                invoice_ids = _fetch_ids(cur, "SELECT payment_invoice_id FROM gold_schema.payment_invoices WHERE account_id = %s AND application_id = %s", (account_id, application_id))
+            else:
+                invoice_ids = _fetch_ids(cur, "SELECT payment_invoice_id FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+
+        settlement_ids = _fetch_ids(cur, "SELECT settlement_id FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+        item_ids = _fetch_ids(cur, "SELECT invoice_item_id FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+
+        if preview:
+            invoice_detail_rows = _fetch_rows(cur, """
+                SELECT
+                    pi.invoice_no,
+                    pi.invoice_date,
+                    pi.total_net_amount,
+                    pi.payment_status,
+                    pi.application_id,
+                    app.application_no,
+                    app.application_type,
+                    app.status,
+                    app.application_date,
+                    app.place,
+                    acc.mobile,
+                    acc.first_name,
+                    acc.last_name
+                FROM gold_schema.payment_invoices pi
+                LEFT JOIN gold_schema.applications app ON pi.application_id = app.application_id
+                LEFT JOIN gold_schema.accounts acc ON pi.account_id = acc.account_id
+                WHERE pi.payment_invoice_id = ANY(%s)
+                ORDER BY pi.invoice_date DESC
+            """, (invoice_ids,)) if invoice_ids else []
+            if invoice_no:
+                invoice_numbers = _fetch_ids(cur, "SELECT invoice_no FROM gold_schema.payment_invoices WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+            elif application_id:
+                invoice_numbers = _fetch_ids(cur, "SELECT invoice_no FROM gold_schema.payment_invoices WHERE account_id = %s AND application_id = %s", (account_id, application_id))
+            else:
+                invoice_numbers = _fetch_ids(cur, "SELECT invoice_no FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+            item_rows = _fetch_rows(cur, "SELECT item_name, net_amount FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+            settlement_rows = _fetch_rows(cur, "SELECT payment_mode, paid_amount FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+            invoice_value = round(sum(float(row[0] or 0) for row in _fetch_rows(cur, "SELECT total_net_amount FROM gold_schema.payment_invoices WHERE payment_invoice_id = ANY(%s)", (invoice_ids,))), 2) if invoice_ids else 0
+            settlement_value = round(sum(float(row[1] or 0) for row in settlement_rows), 2)
+            return {
+                "preview": True,
+                "invoice_no": invoice_no,
+                "invoice_details": [
+                    {
+                        "invoice_no": row[0],
+                        "invoice_date": str(row[1]) if row[1] else None,
+                        "total_net_amount": round(float(row[2] or 0), 2),
+                        "payment_status": row[3],
+                        "application_id": row[4],
+                        "application_no": row[5],
+                        "application_type": row[6],
+                        "application_status": row[7],
+                        "application_date": str(row[8]) if row[8] else None,
+                        "branch": row[9],
+                        "mobile": row[10],
+                        "customer_name": " ".join(part for part in [row[11], row[12]] if part)
+                    }
+                    for row in invoice_detail_rows
+                ],
+                "deleted_settlements": len(settlement_rows),
+                "deleted_items": len(item_rows),
+                "deleted_invoices": len(invoice_ids),
+                "invoice_numbers": invoice_numbers,
+                "invoice_value": invoice_value,
+                "settlement_value": settlement_value,
+                "invoice_items": [
+                    {
+                        "name": row[0],
+                        "amount": round(float(row[1] or 0), 2)
+                    }
+                    for row in item_rows
+                ],
+                "settlements": [
+                    {
+                        "mode": row[0],
+                        "amount": round(float(row[1] or 0), 2)
+                    }
+                    for row in settlement_rows
+                ]
+            }
+
+        deleted_settlements = _delete_by_ids(cur, "DELETE FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", invoice_ids)
+        deleted_items = _delete_by_ids(cur, "DELETE FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", invoice_ids)
+        cur.execute("DELETE FROM gold_schema.payment_invoices WHERE payment_invoice_id = ANY(%s)", (invoice_ids,))
+        deleted_invoices = cur.rowcount
+        conn.commit()
+        return {
+            "deleted_settlements": deleted_settlements,
+            "deleted_items": deleted_items,
+            "deleted_invoices": deleted_invoices
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.delete("/deletions/transactions")
+def delete_transactions(mobile: str = Query(...), admin_username: str = Query(...), preview: bool = Query(False), application_id: int = Query(None)):
+    ensure_vinay_admin(admin_username)
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        account_id = get_account_id(cur, mobile)
+        if application_id:
+            invoice_ids = _fetch_ids(cur, "SELECT payment_invoice_id FROM gold_schema.payment_invoices WHERE account_id = %s AND application_id = %s", (account_id, application_id))
+        else:
+            invoice_ids = _fetch_ids(cur, "SELECT payment_invoice_id FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+        item_ids = _fetch_ids(cur, "SELECT invoice_item_id FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+        calculation_ids = _fetch_ids(cur, "SELECT calc_entry_id FROM gold_schema.calculation_entries WHERE invoice_item_id = ANY(%s)", (item_ids,)) if item_ids else []
+
+        if preview:
+            if application_id:
+                invoice_numbers = _fetch_ids(cur, "SELECT invoice_no FROM gold_schema.payment_invoices WHERE account_id = %s AND application_id = %s", (account_id, application_id))
+            else:
+                invoice_numbers = _fetch_ids(cur, "SELECT invoice_no FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+            item_rows = _fetch_rows(cur, "SELECT item_name, net_amount FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+            settlement_rows = _fetch_rows(cur, "SELECT payment_mode, paid_amount FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+            transaction_value = round(sum(float(row[1] or 0) for row in item_rows), 2)
+            settlement_value = round(sum(float(row[1] or 0) for row in settlement_rows), 2)
+            return {
+                "preview": True,
+                "deleted_calculation_entries": len(calculation_ids),
+                "deleted_settlements": len(settlement_rows),
+                "deleted_items": len(item_rows),
+                "invoice_numbers": invoice_numbers,
+                "transaction_value": transaction_value,
+                "settlement_value": settlement_value,
+                "transaction_items": [
+                    {
+                        "name": row[0],
+                        "amount": round(float(row[1] or 0), 2)
+                    }
+                    for row in item_rows
+                ]
+            }
+
+        deleted_calculations = _delete_by_ids(cur, "DELETE FROM gold_schema.calculation_entries WHERE invoice_item_id = ANY(%s)", item_ids)
+        deleted_settlements = _delete_by_ids(cur, "DELETE FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", invoice_ids)
+        deleted_items = _delete_by_ids(cur, "DELETE FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", invoice_ids)
+        conn.commit()
+        return {
+            "deleted_calculation_entries": deleted_calculations,
+            "deleted_settlements": deleted_settlements,
+            "deleted_items": deleted_items
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.delete("/deletions/applications")
+def delete_applications(mobile: str = Query(...), admin_username: str = Query(...), preview: bool = Query(False), application_id: int = Query(None)):
+    ensure_vinay_admin(admin_username)
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        account_id = get_account_id(cur, mobile)
+        if application_id:
+            application_ids = _fetch_ids(cur, "SELECT application_id FROM gold_schema.applications WHERE account_id = %s AND application_id = %s", (account_id, application_id))
+        else:
+            application_ids = _fetch_ids(cur, "SELECT application_id FROM gold_schema.applications WHERE account_id = %s", (account_id,))
+
+        if application_ids:
+            invoice_ids = _fetch_ids(cur, "SELECT payment_invoice_id FROM gold_schema.payment_invoices WHERE account_id = %s AND application_id = ANY(%s)", (account_id, application_ids))
+        else:
+            invoice_ids = []
+        item_ids = _fetch_ids(cur, "SELECT invoice_item_id FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+
+        if preview:
+            application_numbers = _fetch_ids(cur, "SELECT application_no FROM gold_schema.applications WHERE account_id = %s", (account_id,))
+            ornament_rows = _fetch_rows(cur, "SELECT item_name, quantity, approx_weight_gms FROM gold_schema.ornaments WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else []
+            if application_ids:
+                invoice_numbers = _fetch_ids(cur, "SELECT invoice_no FROM gold_schema.payment_invoices WHERE account_id = %s AND application_id = ANY(%s)", (account_id, application_ids))
+            else:
+                invoice_numbers = []
+            settlement_rows = _fetch_rows(cur, "SELECT payment_mode, paid_amount FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+            invoice_value = round(sum(float(row[0] or 0) for row in _fetch_rows(cur, "SELECT total_net_amount FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))), 2)
+            settlement_value = round(sum(float(row[1] or 0) for row in settlement_rows), 2)
+            pledge_rows = _fetch_rows(cur, "SELECT pledge_id, pledger_name, financier_name, principal_amount, total_due FROM gold_schema.pledge_details WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else []
+            return {
+                "preview": True,
+                "deleted_application_mappings": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.estimation_application_map WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else 0,
+                "deleted_pledge_details": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.pledge_details WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else 0,
+                "deleted_ornaments": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.ornaments WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else 0,
+                "deleted_calculation_entries": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.calculation_entries WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else 0,
+                "deleted_settlements": len(settlement_rows),
+                "deleted_invoice_items": len(item_ids),
+                "deleted_invoices": len(invoice_ids),
+                "deleted_estimation_items": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.estimation_items WHERE estimation_id IN (SELECT estimation_id FROM gold_schema.estimation_application_map WHERE application_id = ANY(%s))", (application_ids,)) if application_ids else 0,
+                "deleted_estimations": 0,
+                "deleted_applications": len(application_ids),
+                "application_numbers": application_numbers,
+                "ornaments": [
+                    {
+                        "name": row[0],
+                        "quantity": row[1],
+                        "weight_gms": round(float(row[2] or 0), 3)
+                    }
+                    for row in ornament_rows
+                ],
+                "invoice_numbers": invoice_numbers,
+                "invoice_value": invoice_value,
+                "settlement_value": settlement_value,
+                "pledges": [
+                    {
+                        "pledge_id": row[0],
+                        "pledger_name": row[1],
+                        "financier_name": row[2],
+                        "principal_amount": float(row[3]) if row[3] is not None else 0.0,
+                        "total_due": float(row[4]) if row[4] is not None else 0.0
+                    }
+                    for row in pledge_rows
+                ]
+            }
+
+        deleted_application_maps = _delete_by_ids(cur, "DELETE FROM gold_schema.estimation_application_map WHERE application_id = ANY(%s)", application_ids) if application_ids else 0
+        deleted_pledge = _delete_by_ids(cur, "DELETE FROM gold_schema.pledge_details WHERE application_id = ANY(%s)", application_ids) if application_ids else 0
+        deleted_ornaments = _delete_by_ids(cur, "DELETE FROM gold_schema.ornaments WHERE application_id = ANY(%s)", application_ids) if application_ids else 0
+        deleted_calc_entries = _delete_by_ids(cur, "DELETE FROM gold_schema.calculation_entries WHERE application_id = ANY(%s)", application_ids) if application_ids else 0
+        deleted_settlements = _delete_by_ids(cur, "DELETE FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", invoice_ids) if invoice_ids else 0
+        deleted_items = _delete_by_ids(cur, "DELETE FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", invoice_ids) if invoice_ids else 0
+        deleted_invoices = 0
+        if invoice_ids:
+            cur.execute("DELETE FROM gold_schema.payment_invoices WHERE account_id = %s AND payment_invoice_id = ANY(%s)", (account_id, invoice_ids))
+            deleted_invoices = cur.rowcount
+
+        deleted_estimation_items = _delete_by_ids(cur, "DELETE FROM gold_schema.estimation_items WHERE estimation_id IN (SELECT estimation_id FROM gold_schema.estimation_application_map WHERE application_id = ANY(%s))", (application_ids,)) if application_ids else 0
+        deleted_estimations = 0
+        # For application-scoped delete, do not remove estimations themselves (they may be shared). Full-account delete (no application_id) still removes estimations.
+        if not application_id:
+            deleted_estimations = 0
+            cur.execute("DELETE FROM gold_schema.estimations WHERE account_id = %s", (account_id,))
+            deleted_estimations = cur.rowcount
+        deleted_applications = 0
+        if application_ids:
+            cur.execute("DELETE FROM gold_schema.applications WHERE account_id = %s AND application_id = ANY(%s)", (account_id, application_ids))
+            deleted_applications = cur.rowcount
+
+        conn.commit()
+        return {
+            "deleted_application_mappings": deleted_application_maps,
+            "deleted_pledge_details": deleted_pledge,
+            "deleted_ornaments": deleted_ornaments,
+            "deleted_calculation_entries": deleted_calc_entries,
+            "deleted_settlements": deleted_settlements,
+            "deleted_invoice_items": deleted_items,
+            "deleted_invoices": deleted_invoices,
+            "deleted_estimation_items": deleted_estimation_items,
+            "deleted_estimations": deleted_estimations,
+            "deleted_applications": deleted_applications
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.delete("/deletions/all")
+def delete_all_records(mobile: str = Query(...), admin_username: str = Query(...), preview: bool = Query(False)):
+    ensure_vinay_admin(admin_username)
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        account_id = get_account_id(cur, mobile)
+        application_ids = _fetch_ids(cur, "SELECT application_id FROM gold_schema.applications WHERE account_id = %s", (account_id,))
+        invoice_ids = _fetch_ids(cur, "SELECT payment_invoice_id FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+        item_ids = _fetch_ids(cur, "SELECT invoice_item_id FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+
+        if preview:
+            application_numbers = _fetch_ids(cur, "SELECT application_no FROM gold_schema.applications WHERE account_id = %s", (account_id,))
+            ornament_rows = _fetch_rows(cur, "SELECT item_name, quantity, approx_weight_gms FROM gold_schema.ornaments WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else []
+            invoice_numbers = _fetch_ids(cur, "SELECT invoice_no FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+            item_rows = _fetch_rows(cur, "SELECT item_name, net_amount FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+            settlement_rows = _fetch_rows(cur, "SELECT payment_mode, paid_amount FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", (invoice_ids,)) if invoice_ids else []
+            invoice_value = round(sum(float(row[0] or 0) for row in _fetch_rows(cur, "SELECT total_net_amount FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))), 2)
+            settlement_value = round(sum(float(row[1] or 0) for row in settlement_rows), 2)
+            transaction_value = round(sum(float(row[1] or 0) for row in item_rows), 2)
+            return {
+                "preview": True,
+                "deleted_application_mappings": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.estimation_application_map WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else 0,
+                "deleted_pledge_details": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.pledge_details WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else 0,
+                "deleted_ornaments": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.ornaments WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else 0,
+                "deleted_calculation_entries_by_app": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.calculation_entries WHERE application_id = ANY(%s)", (application_ids,)) if application_ids else 0,
+                "deleted_calculation_entries_by_item": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.calculation_entries WHERE invoice_item_id = ANY(%s)", (item_ids,)) if item_ids else 0,
+                "deleted_settlements": len(settlement_rows),
+                "deleted_invoice_items": len(item_rows),
+                "deleted_invoices": len(invoice_ids),
+                "deleted_estimation_items": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.estimation_items WHERE estimation_id IN (SELECT estimation_id FROM gold_schema.estimations WHERE account_id = %s)", (account_id,)),
+                "deleted_estimations": _count_rows(cur, "SELECT COUNT(*) FROM gold_schema.estimations WHERE account_id = %s", (account_id,)),
+                "deleted_applications": len(application_ids),
+                "application_numbers": application_numbers,
+                "ornaments": [
+                    {
+                        "name": row[0],
+                        "quantity": row[1],
+                        "weight_gms": round(float(row[2] or 0), 3)
+                    }
+                    for row in ornament_rows
+                ],
+                "invoice_numbers": invoice_numbers,
+                "invoice_value": invoice_value,
+                "settlement_value": settlement_value,
+                "transaction_value": transaction_value,
+                "transaction_items": [
+                    {
+                        "name": row[0],
+                        "amount": round(float(row[1] or 0), 2)
+                    }
+                    for row in item_rows
+                ]
+            }
+
+        deleted_application_maps = _delete_by_ids(cur, "DELETE FROM gold_schema.estimation_application_map WHERE application_id = ANY(%s)", application_ids)
+        deleted_pledge = _delete_by_ids(cur, "DELETE FROM gold_schema.pledge_details WHERE application_id = ANY(%s)", application_ids)
+        deleted_ornaments = _delete_by_ids(cur, "DELETE FROM gold_schema.ornaments WHERE application_id = ANY(%s)", application_ids)
+        deleted_calc_entries_by_app = _delete_by_ids(cur, "DELETE FROM gold_schema.calculation_entries WHERE application_id = ANY(%s)", application_ids)
+        deleted_calculations_by_item = _delete_by_ids(cur, "DELETE FROM gold_schema.calculation_entries WHERE invoice_item_id = ANY(%s)", item_ids)
+        deleted_settlements = _delete_by_ids(cur, "DELETE FROM gold_schema.payment_settlements WHERE payment_invoice_id = ANY(%s)", invoice_ids)
+        deleted_items = _delete_by_ids(cur, "DELETE FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = ANY(%s)", invoice_ids)
+        deleted_invoices = 0
+        if invoice_ids:
+            cur.execute("DELETE FROM gold_schema.payment_invoices WHERE account_id = %s", (account_id,))
+            deleted_invoices = cur.rowcount
+        deleted_estimation_items = _delete_by_ids(cur, "DELETE FROM gold_schema.estimation_items WHERE estimation_id IN (SELECT estimation_id FROM gold_schema.estimations WHERE account_id = %s)", (account_id,))
+        deleted_estimations = 0
+        cur.execute("DELETE FROM gold_schema.estimations WHERE account_id = %s", (account_id,))
+        deleted_estimations = cur.rowcount
+        deleted_applications = 0
+        if application_ids:
+            cur.execute("DELETE FROM gold_schema.applications WHERE account_id = %s", (account_id,))
+            deleted_applications = cur.rowcount
+
+        conn.commit()
+        return {
+            "deleted_application_mappings": deleted_application_maps,
+            "deleted_pledge_details": deleted_pledge,
+            "deleted_ornaments": deleted_ornaments,
+            "deleted_calculation_entries_by_app": deleted_calc_entries_by_app,
+            "deleted_calculation_entries_by_item": deleted_calculations_by_item,
+            "deleted_settlements": deleted_settlements,
+            "deleted_invoice_items": deleted_items,
+            "deleted_invoices": deleted_invoices,
+            "deleted_estimation_items": deleted_estimation_items,
+            "deleted_estimations": deleted_estimations,
+            "deleted_applications": deleted_applications
+        }
+    finally:
+        cur.close()
+        conn.close()
+
 
 @app.get("/branches")
 def get_branches():
@@ -2522,6 +3109,268 @@ def get_customer_summary(
         conn.close()
 
 
+@app.post("/calc-entries/create", response_model=CalcEntryResponse)
+def create_calc_entry(payload: CalcEntryCreateRequest):
+    """Create or update a calculated transaction manual entry."""
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        ensure_calculation_entries_table(cur)
+        conn.commit()
+
+        account_id = get_account_id(cur, payload.mobile)
+        
+        cur.execute(
+            """
+            SELECT calc_entry_id FROM gold_schema.calculation_entries
+            WHERE account_id = %s
+              AND application_id = %s
+              AND entry_date = %s
+              AND invoice_item_id IS NOT DISTINCT FROM %s
+            """,
+            (account_id, payload.application_id, payload.entry_date, payload.invoice_item_id)
+        )
+        existing = cur.fetchone()
+
+        if existing:
+            cur.execute(
+                """
+                UPDATE gold_schema.calculation_entries
+                SET mobile = %s,
+                    invoice_item_id = %s,
+                    application_number = %s,
+                    invoice_number = %s,
+                    weight_after_melting = %s,
+                    purity = %s,
+                    refinery_weight = %s,
+                    refinery_purity = %s,
+                    updated_at = NOW()
+                WHERE calc_entry_id = %s
+                RETURNING *
+                """,
+                (
+                    payload.mobile,
+                    payload.invoice_item_id,
+                    payload.application_number,
+                    payload.invoice_number,
+                    payload.wt_after or 0,
+                    payload.purity_percentage or 0,
+                    payload.cal_wt_after,
+                    payload.cal_purity_percentage,
+                    existing["calc_entry_id"]
+                )
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO gold_schema.calculation_entries (
+                    account_id, application_id, invoice_item_id,
+                    application_number, invoice_number, entry_date, mobile,
+                    weight_after_melting, purity, refinery_weight, refinery_purity
+                )
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING *
+                """,
+                (
+                    account_id,
+                    payload.application_id,
+                    payload.invoice_item_id,
+                    payload.application_number,
+                    payload.invoice_number,
+                    payload.entry_date,
+                    payload.mobile,
+                    payload.wt_after or 0,
+                    payload.purity_percentage or 0,
+                    payload.cal_wt_after,
+                    payload.cal_purity_percentage
+                )
+            )
+
+        row = cur.fetchone()
+        conn.commit()
+        
+        return calc_entry_response(row)
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/calc-entries/all")
+def get_all_calc_entries():
+    """Get all calculated transaction manual entries."""
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        ensure_calculation_entries_table(cur)
+        conn.commit()
+
+        cur.execute(
+            """
+            SELECT calc_entry_id, account_id, application_id, invoice_item_id,
+                   application_number, invoice_number, entry_date, mobile,
+                   weight_after_melting, purity, fine_weight,
+                   refinery_weight, refinery_purity, refinery_fine_weight, difference,
+                   created_at, updated_at
+            FROM gold_schema.calculation_entries
+            ORDER BY entry_date DESC, created_at DESC
+            """
+        )
+        return {"entries": cur.fetchall()}
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/calc-entries/by-mobile", response_model=CalcEntryListResponse)
+def get_calc_entries_by_mobile(mobile: str = Query(...)):
+    """Get all calculation entries for a customer"""
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        ensure_calculation_entries_table(cur)
+        conn.commit()
+
+        account_id = get_account_id(cur, mobile)
+        
+        cur.execute(
+            """
+            SELECT calc_entry_id, account_id, application_id, invoice_item_id,
+                   application_number, invoice_number, entry_date, mobile,
+                   weight_after_melting, purity, fine_weight,
+                   refinery_weight, refinery_purity, refinery_fine_weight, difference,
+                   created_at, updated_at
+            FROM gold_schema.calculation_entries
+            WHERE account_id = %s OR mobile = %s
+            ORDER BY entry_date DESC, created_at DESC
+            """,
+            (account_id, mobile)
+        )
+        
+        rows = cur.fetchall()
+        entries = [calc_entry_response(r) for r in rows]
+        
+        return CalcEntryListResponse(mobile=mobile, entries=entries)
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.put("/calc-entries/{calc_entry_id}", response_model=CalcEntryResponse)
+def update_calc_entry(calc_entry_id: int, payload: CalcEntryUpdateRequest, mobile: str = Query(...)):
+    """Update manual calculation fields for an entry"""
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        ensure_calculation_entries_table(cur)
+        conn.commit()
+
+        account_id = get_account_id(cur, mobile)
+        
+        # Verify entry exists and belongs to this account
+        cur.execute(
+            """
+            SELECT * FROM gold_schema.calculation_entries
+            WHERE calc_entry_id = %s AND account_id = %s
+            """,
+            (calc_entry_id, account_id)
+        )
+        
+        entry = cur.fetchone()
+        if not entry:
+            raise HTTPException(404, "Calculation entry not found")
+        
+        update_data = payload.dict(exclude_unset=True)
+        field_map = {
+            "application_number": "application_number",
+            "invoice_number": "invoice_number",
+            "wt_after": "weight_after_melting",
+            "purity_percentage": "purity",
+            "cal_wt_after": "refinery_weight",
+            "cal_purity_percentage": "refinery_purity"
+        }
+        update_fields = []
+        values = []
+        for field_name, field_value in update_data.items():
+            column_name = field_map.get(field_name)
+            if not column_name:
+                continue
+            update_fields.append(f"{column_name} = %s")
+            values.append(field_value)
+        
+        if not update_fields:
+            raise HTTPException(400, "No fields provided to update")
+        
+        update_fields.append("updated_at = NOW()")
+        values.append(calc_entry_id)
+        
+        cur.execute(
+            f"""
+            UPDATE gold_schema.calculation_entries
+            SET {', '.join(update_fields)}
+            WHERE calc_entry_id = %s
+            RETURNING *
+            """,
+            tuple(values)
+        )
+        
+        updated_entry = cur.fetchone()
+        conn.commit()
+        
+        return calc_entry_response(updated_entry)
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.delete("/calc-entries/{calc_entry_id}")
+def delete_calc_entry(calc_entry_id: int, mobile: str = Query(...)):
+    """Delete a calculation entry"""
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        ensure_calculation_entries_table(cur)
+        conn.commit()
+
+        account_id = get_account_id(cur, mobile)
+        
+        # Verify entry exists and belongs to this account
+        cur.execute(
+            """
+            DELETE FROM gold_schema.calculation_entries
+            WHERE calc_entry_id = %s AND account_id = %s
+            RETURNING calc_entry_id
+            """,
+            (calc_entry_id, account_id)
+        )
+        
+        if not cur.fetchone():
+            raise HTTPException(404, "Calculation entry not found")
+        
+        conn.commit()
+        return {"status": "deleted", "calc_entry_id": calc_entry_id}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
 # @app.get("/transactions/all")
 # def get_transactions(
 #     mobile: str = Query(None),
@@ -2627,6 +3476,8 @@ def get_transactions(
                 pi.payment_invoice_id,
                 pi.account_id as invoice_account_id,
                 pi.application_id,
+                app.application_no,
+                app.place AS application_branch,
                 pi.estimation_id,
                 pi.invoice_no,
                 pi.invoice_date,
@@ -2643,6 +3494,7 @@ def get_transactions(
                 a.email as customer_email
             FROM gold_schema.payment_invoices pi
             LEFT JOIN gold_schema.accounts a ON pi.account_id = a.account_id
+            LEFT JOIN gold_schema.applications app ON pi.application_id = app.application_id
             WHERE {where_clause}
             ORDER BY pi.invoice_date DESC
         """

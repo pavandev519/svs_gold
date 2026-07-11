@@ -177,14 +177,44 @@ export const transactionsAPI = {
 }
 
 export const deletionsAPI = {
-  previewApplications: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/applications?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}&preview=true`),
-  deleteApplications: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/applications?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}`),
-  previewPayments: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/payments?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}&preview=true`),
-  deletePayments: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/payments?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}`),
-  previewInvoices: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/invoices?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}&preview=true`),
-  deleteInvoices: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/invoices?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}`),
-  previewTransactions: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/transactions?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}&preview=true`),
-  deleteTransactions: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/transactions?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}`),
+  // If an applicationId is supplied, include it so deletion/preview targets that application only.
+  previewApplications: (mobile, applicationId = null, adminUsername = 'vinay') => {
+    const appParam = applicationId ? `&application_id=${encodeURIComponent(applicationId)}` : ''
+    return api.delete(`/deletions/applications?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}${appParam}&preview=true`)
+  },
+  deleteApplications: (mobile, applicationId = null, adminUsername = 'vinay') => {
+    const appParam = applicationId ? `&application_id=${encodeURIComponent(applicationId)}` : ''
+    return api.delete(`/deletions/applications?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}${appParam}`)
+  },
+  // payment/invoice/transaction previews/deletes can be scoped to an application by passing applicationId
+  previewPayments: (mobile, applicationId = null, adminUsername = 'vinay') => {
+    const appParam = applicationId ? `&application_id=${encodeURIComponent(applicationId)}` : ''
+    return api.delete(`/deletions/payments?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}${appParam}&preview=true`)
+  },
+  deletePayments: (mobile, applicationId = null, adminUsername = 'vinay') => {
+    const appParam = applicationId ? `&application_id=${encodeURIComponent(applicationId)}` : ''
+    return api.delete(`/deletions/payments?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}${appParam}`)
+  },
+  previewInvoices: (mobile, applicationId = null, adminUsername = 'vinay', invoiceNo = null) => {
+    const appParam = applicationId ? `&application_id=${encodeURIComponent(applicationId)}` : ''
+    const mobileParam = mobile ? `mobile=${encodeURIComponent(mobile)}&` : ''
+    const invoiceParam = invoiceNo ? `&invoice_no=${encodeURIComponent(invoiceNo)}` : ''
+    return api.delete(`/deletions/invoices?${mobileParam}admin_username=${encodeURIComponent(adminUsername)}${appParam}${invoiceParam}&preview=true`)
+  },
+  deleteInvoices: (mobile, applicationId = null, adminUsername = 'vinay', invoiceNo = null) => {
+    const appParam = applicationId ? `&application_id=${encodeURIComponent(applicationId)}` : ''
+    const mobileParam = mobile ? `mobile=${encodeURIComponent(mobile)}&` : ''
+    const invoiceParam = invoiceNo ? `&invoice_no=${encodeURIComponent(invoiceNo)}` : ''
+    return api.delete(`/deletions/invoices?${mobileParam}admin_username=${encodeURIComponent(adminUsername)}${appParam}${invoiceParam}`)
+  },
+  previewTransactions: (mobile, applicationId = null, adminUsername = 'vinay') => {
+    const appParam = applicationId ? `&application_id=${encodeURIComponent(applicationId)}` : ''
+    return api.delete(`/deletions/transactions?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}${appParam}&preview=true`)
+  },
+  deleteTransactions: (mobile, applicationId = null, adminUsername = 'vinay') => {
+    const appParam = applicationId ? `&application_id=${encodeURIComponent(applicationId)}` : ''
+    return api.delete(`/deletions/transactions?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}${appParam}`)
+  },
   previewAll: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/all?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}&preview=true`),
   deleteAll: (mobile, adminUsername = 'vinay') => api.delete(`/deletions/all?mobile=${encodeURIComponent(mobile)}&admin_username=${encodeURIComponent(adminUsername)}`)
 }
