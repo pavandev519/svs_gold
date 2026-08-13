@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, validator
+from pydantic import BaseModel, EmailStr, validator, root_validator
 from typing import Optional, List
 from datetime import date, datetime
 from decimal import Decimal
@@ -147,6 +147,16 @@ class ApplicationResponse(BaseModel):
     status: str
 
 
+class ApplicationUpdateRequest(BaseModel):
+    mobile: str
+    application_id: int
+    application_type: Optional[str] = None
+    application_date: Optional[date] = None
+    application_no: Optional[str] = None
+    place: Optional[str] = None
+    status: Optional[str] = None
+
+
 class ApplicationDeleteRequest(BaseModel):
     mobile: str
     application_id: int
@@ -225,6 +235,7 @@ class OrnamentCreateResponse(BaseModel):
 class EstimationItemCreateRequest(BaseModel):
     mobile: str
     estimation_no: str
+    application_id: Optional[int] = None
 
     item_name: Optional[str] = None
     quantity: int = 1
@@ -268,9 +279,11 @@ class EstimationItemCreateRequest(BaseModel):
         return v
 
     @validator('deduction_percentage')
-    def deduction_non_negative(cls, v):
-        if v < 0 or v > 100:
-            raise ValueError('deduction_percentage must be between 0 and 100')
+    def deduction_minimum(cls, v):
+        if v is not None and v < 0.5:
+            raise ValueError('Processing fee must be at least 0.5%')
+        if v is not None and v > 100:
+            raise ValueError('Processing fee cannot exceed 100%')
         return v
 
 
@@ -283,6 +296,7 @@ class EstimationResponse(BaseModel):
 
 
 class EnquiryCreateRequest(BaseModel):
+    salutation: Optional[str] = None
     name: str
     mobile: Optional[str] = None
     email: Optional[EmailStr] = None
@@ -292,9 +306,13 @@ class EnquiryCreateRequest(BaseModel):
     source: Optional[str] = None
     ornament_type: Optional[str] = None
     quantity: Optional[int] = None
+    processing_fee: Optional[Decimal] = None
     expected_amount: Optional[Decimal] = None
+    gross_weight_gms: Optional[Decimal] = None
     gold_weight_gms: Optional[Decimal] = None
     purity_percentage: Optional[Decimal] = None
+    rate: Optional[Decimal] = None
+    net_amount: Optional[Decimal] = None
     pledge_amount: Optional[Decimal] = None
     financier_name: Optional[str] = None
     financier_branch: Optional[str] = None
@@ -313,12 +331,22 @@ class EnquiryCreateResponse(BaseModel):
 
 class EnquiryItem(BaseModel):
     enquiry_id: int
+    salutation: Optional[str] = None
     name: str
     mobile: Optional[str] = None
     email: Optional[EmailStr] = None
     enquiry_type: str
     branch: Optional[str] = None
     product_interest: Optional[str] = None
+    source: Optional[str] = None
+    ornament_type: Optional[str] = None
+    processing_fee: Optional[Decimal] = None
+    expected_amount: Optional[Decimal] = None
+    gross_weight_gms: Optional[Decimal] = None
+    gold_weight_gms: Optional[Decimal] = None
+    purity_percentage: Optional[Decimal] = None
+    rate: Optional[Decimal] = None
+    net_amount: Optional[Decimal] = None
     pledge_amount: Optional[Decimal] = None
     financier_name: Optional[str] = None
     financier_branch: Optional[str] = None
@@ -326,7 +354,39 @@ class EnquiryItem(BaseModel):
     lead_status: Optional[str] = None
     lead_stage: Optional[str] = None
     follow_up_date: Optional[date] = None
+    priority: Optional[str] = None
+    remarks: Optional[str] = None
     created_at: Optional[datetime] = None
+
+
+class EnquiryUpdateRequest(BaseModel):
+    enquiry_id: int
+    salutation: Optional[str] = None
+    name: Optional[str] = None
+    mobile: Optional[str] = None
+    email: Optional[EmailStr] = None
+    branch: Optional[str] = None
+    enquiry_type: Optional[str] = None
+    product_interest: Optional[str] = None
+    source: Optional[str] = None
+    ornament_type: Optional[str] = None
+    quantity: Optional[int] = None
+    processing_fee: Optional[Decimal] = None
+    expected_amount: Optional[Decimal] = None
+    gross_weight_gms: Optional[Decimal] = None
+    gold_weight_gms: Optional[Decimal] = None
+    purity_percentage: Optional[Decimal] = None
+    rate: Optional[Decimal] = None
+    net_amount: Optional[Decimal] = None
+    pledge_amount: Optional[Decimal] = None
+    financier_name: Optional[str] = None
+    financier_branch: Optional[str] = None
+    lead_state: Optional[str] = None
+    lead_status: Optional[str] = None
+    lead_stage: Optional[str] = None
+    follow_up_date: Optional[date] = None
+    priority: Optional[str] = None
+    remarks: Optional[str] = None
 
 
 class EnquiryListResponse(BaseModel):
@@ -381,6 +441,12 @@ class PaymentInvoiceItemCreateRequest(BaseModel):
             raise ValueError('purity_after_melting must be > 0')
         return v
 
+    @validator('deduction_percentage')
+    def deduction_must_be_minimum(cls, v):
+        if v is not None and v < 0.5:
+            raise ValueError('Processing fee must be at least 0.5%')
+        return v
+
 
 class PaymentInvoiceItemResponse(BaseModel):
     invoice_item_id: int
@@ -418,4 +484,111 @@ class PaymentSettlementResponse(BaseModel):
     settlement_id: int
     payment_invoice_id: int
     paid_amount: Decimal
+
+
+# -------------------------------------------------
+# CALCULATION ENTRIES (Weight & Purity Tracking)
+# -------------------------------------------------
+
+class CalcEntryCreateRequest(BaseModel):
+    mobile: str
+    application_id: int
+    invoice_item_id: Optional[int] = None
+    application_number: Optional[str] = None
+    invoice_number: Optional[str] = None
+    entry_date: date
+    
+    # Auto-populated fields
+    wt_before: Optional[Decimal] = None
+    wt_after: Optional[Decimal] = None
+    purity_percentage: Optional[Decimal] = None
+    
+    # Manually entered fields (optional for initial creation)
+    cal_wt_before: Optional[Decimal] = None
+    cal_wt_after: Optional[Decimal] = None
+    cal_purity_percentage: Optional[Decimal] = None
+
+    @validator('wt_before', 'wt_after', 'cal_wt_before', 'cal_wt_after')
+    def calc_weight_non_negative(cls, v):
+        if v is not None and v < 0:
+            raise ValueError('weight values cannot be negative')
+        return v
+
+    @validator('purity_percentage', 'cal_purity_percentage')
+    def calc_purity_valid(cls, v):
+        if v is not None and (v < 0 or v > 100):
+            raise ValueError('purity percentage must be between 0 and 100')
+        return v
+
+    @root_validator(skip_on_failure=True)
+    def calc_weights_valid(cls, values):
+        cal_wt_before = values.get('cal_wt_before')
+        cal_wt_after = values.get('cal_wt_after')
+
+        if cal_wt_before is not None and cal_wt_after is not None and cal_wt_after > cal_wt_before:
+            raise ValueError('cal_wt_after cannot be greater than cal_wt_before')
+
+        return values
+
+
+class CalcEntryUpdateRequest(BaseModel):
+    application_number: Optional[str] = None
+    invoice_number: Optional[str] = None
+    wt_after: Optional[Decimal] = None
+    purity_percentage: Optional[Decimal] = None
+    cal_wt_before: Optional[Decimal] = None
+    cal_wt_after: Optional[Decimal] = None
+    cal_purity_percentage: Optional[Decimal] = None
+
+    @validator('wt_after', 'cal_wt_before', 'cal_wt_after')
+    def update_calc_weight_non_negative(cls, v):
+        if v is not None and v < 0:
+            raise ValueError('calculated weight values cannot be negative')
+        return v
+
+    @validator('purity_percentage', 'cal_purity_percentage')
+    def update_calc_purity_valid(cls, v):
+        if v is not None and (v < 0 or v > 100):
+            raise ValueError('calculated purity percentage must be between 0 and 100')
+        return v
+
+    @root_validator(skip_on_failure=True)
+    def update_calc_weights_valid(cls, values):
+        cal_wt_before = values.get('cal_wt_before')
+        cal_wt_after = values.get('cal_wt_after')
+
+        if cal_wt_before is not None and cal_wt_after is not None and cal_wt_after > cal_wt_before:
+            raise ValueError('cal_wt_after cannot be greater than cal_wt_before')
+
+        return values
+
+
+class CalcEntryResponse(BaseModel):
+    calc_entry_id: int
+    mobile: str
+    application_id: int
+    invoice_item_id: Optional[int] = None
+    application_number: Optional[str] = None
+    invoice_number: Optional[str] = None
+    entry_date: date
+    wt_before: Optional[Decimal] = None
+    wt_after: Optional[Decimal] = None
+    purity_percentage: Optional[Decimal] = None
+    cal_wt_before: Optional[Decimal] = None
+    cal_wt_after: Optional[Decimal] = None
+    cal_purity_percentage: Optional[Decimal] = None
+    weight_after_melting: Optional[Decimal] = None
+    purity: Optional[Decimal] = None
+    fine_weight: Optional[Decimal] = None
+    refinery_weight: Optional[Decimal] = None
+    refinery_purity: Optional[Decimal] = None
+    refinery_fine_weight: Optional[Decimal] = None
+    difference: Optional[Decimal] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CalcEntryListResponse(BaseModel):
+    mobile: str
+    entries: List[CalcEntryResponse]
 

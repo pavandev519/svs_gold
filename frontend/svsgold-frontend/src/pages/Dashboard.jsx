@@ -759,6 +759,7 @@ export default function Dashboard({ loginData, onLogout }) {
                                                         <ApplicationsView
                                                             key={`${refreshKey}-${branchFilter}`}
                                                             userIdentifier={customerMobile}
+                                                            loginData={loginData}
                                                             applications={filtered}
                                                             loading={loading}
                                                             error={error}

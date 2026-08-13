@@ -27,6 +27,7 @@ export default function ApplicationForm({
     return `AP-${today}-${lastThreeDigits}-${randomThreeDigits}`
   }
 
+  const existingBranch = existingApplication?.place || existingApplication?.branch || existingApplication?.branch_name || ''
   const defaultApplication = {
     mobile: userIdentifier,
     application_type: 'PLEDGE_RELEASE',
@@ -53,7 +54,9 @@ export default function ApplicationForm({
   }
 
   const [applicationData, setApplicationData] = useState(
-    existingApplication ? { ...defaultApplication, ...existingApplication, mobile: userIdentifier } : defaultApplication
+    existingApplication
+      ? { ...defaultApplication, ...existingApplication, place: existingBranch || assignedBranch || '', mobile: userIdentifier }
+      : defaultApplication
   )
   const [pledgeDetails, setPledgeDetails] = useState(defaultPledge)
   const branchLocked = Boolean(assignedBranch)
@@ -172,14 +175,8 @@ export default function ApplicationForm({
           }
         }
 
-        // Determine resume step
-        if (isDirect) {
-          setStep(hasOrnaments ? 2 : 2)
-        } else {
-          if (hasOrnaments) setStep(3)
-          else if (hasPledge) setStep(3)
-          else setStep(2)
-        }
+        // Always start editing from the first application step
+        setStep(1)
 
       } catch (err) {
         console.error('Error loading existing data:', err)
@@ -387,7 +384,7 @@ export default function ApplicationForm({
         } else {
           const createRes = await applicationsAPI.createApplication({
             ...applicationData,
-            place: assignedBranch || applicationData.place,
+            place: existingBranch || assignedBranch || applicationData.place,
             status: 'DRAFT'
           })
           appId = createRes.data.application_id
@@ -442,7 +439,7 @@ export default function ApplicationForm({
         onSuccess({
           ...applicationData,
           application_id: appId,
-          status: 'DRAFT',
+          status: applicationData.status || existingApplication?.status || 'DRAFT',
           total_quantity: ornaments.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),
           total_weight_gms: ornaments.reduce((sum, item) => sum + (Number(item.approx_weight_gms) || 0), 0),
           ornaments: ornaments.map((item, index) => ({
@@ -868,7 +865,7 @@ export default function ApplicationForm({
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-gray-900">
-          {existingApplication ? 'Continue Application' : 'Create Application'}
+          {existingApplication ? 'Edit Application' : 'Create Application'}
         </h2>
         <button type="button" onClick={onCancel} className="text-sm text-gray-500 hover:text-gray-700 font-medium px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-all">
           Cancel

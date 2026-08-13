@@ -12,6 +12,7 @@ export default function EstimationPage() {
   const location = useLocation()
   const navigate = useNavigate()
   const application = location.state?.application
+  const existingEstimation = application?.estimation || application?._appEstimation || {}
 
   /* ---- Sidebar ---- */
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -20,7 +21,7 @@ export default function EstimationPage() {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [estimationNo, setEstimationNo] = useState('')
+  const [estimationNo, setEstimationNo] = useState(existingEstimation.estimation_no || application?.estimation_no || '')
 
   /* ---- Post-save ---- */
   const [saved, setSaved] = useState(false)
@@ -64,8 +65,21 @@ export default function EstimationPage() {
   useEffect(() => {
     if (!application) return
     const appId = application?.application?.application_id || application?._appEstimation?.application_id
+    const estimationItems = application?.estimation?.items || application?.estimation_items || []
+    if (estimationItems.length > 0 && items.length === 0) {
+      setItems(estimationItems.map((o, i) => ({
+        id: o.id || o.item_id || Date.now() + i,
+        item_name: o.item_name || '',
+        quantity: Number(o.quantity) || Number(o.quantity_before_melting) || 1,
+        gross_weight_gms: Number(o.gross_weight_gms) || Number(o.approx_weight_gms) || 0,
+        stone_weight_gms: Number(o.stone_weight_gms) || 0,
+        purity_percentage: Number(o.purity_percentage) || 0,
+        gold_rate_per_gm: Number(o.gold_rate_per_gm) || 0,
+        deduction_percentage: Number(o.deduction_percentage) || 0
+      })))
+      return
+    }
     const allOrnaments = application.ornaments || []
-    // Filter ornaments by application_id
     const ornaments = appId ? allOrnaments.filter(o => o.application_id === appId) : allOrnaments
     if (ornaments.length > 0 && items.length === 0) {
       setItems(ornaments.map((o, i) => ({
@@ -157,15 +171,26 @@ export default function EstimationPage() {
     if (!validate()) return
     try {
       setLoading(true); setError('')
-      const estNo = `EST-${Date.now()}`
+      const estNo = existingEstimation.estimation_no || `EST-${Date.now()}`
       setEstimationNo(estNo)
+
+      const applicationId = application?.application?.application_id || application?._appEstimation?.application_id
+      if (applicationId && (existingEstimation.estimation_id || application?._appEstimation?.estimation_id)) {
+        await applicationsAPI.deleteEstimationItems(loggedInMobile, applicationId)
+      }
 
       for (const item of items) {
         await applicationsAPI.addEstimation({
-          mobile: loggedInMobile, estimation_no: estNo, item_name: item.item_name,
-          quantity: parseFloat(item.quantity) || 1, gross_weight_gms: parseFloat(item.gross_weight_gms) || 0,
-          stone_weight_gms: parseFloat(item.stone_weight_gms) || 0, purity_percentage: parseFloat(item.purity_percentage) || 0,
-          gold_rate_per_gm: parseFloat(item.gold_rate_per_gm) || 0, deduction_percentage: parseFloat(item.deduction_percentage) || 0
+          mobile: loggedInMobile,
+          application_id: applicationId,
+          estimation_no: estNo,
+          item_name: item.item_name,
+          quantity: parseFloat(item.quantity) || 1,
+          gross_weight_gms: parseFloat(item.gross_weight_gms) || 0,
+          stone_weight_gms: parseFloat(item.stone_weight_gms) || 0,
+          purity_percentage: parseFloat(item.purity_percentage) || 0,
+          gold_rate_per_gm: parseFloat(item.gold_rate_per_gm) || 0,
+          deduction_percentage: parseFloat(item.deduction_percentage) || 0
         })
       }
 
@@ -221,7 +246,9 @@ export default function EstimationPage() {
         },
         estimation_no: estimationNo,
         items,
-        grandTotal: finalAmount
+        grandTotal: finalAmount,
+        forceFirstPage: true,
+        startStep: 1
       }
     })
   }

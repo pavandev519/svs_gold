@@ -14,6 +14,7 @@ const PAYMENT_ITEM_NAME = 'Melted Gold'
 
 export default function ApplicationsView({
   userIdentifier,
+  loginData,
   applications,
   loading,
   error,
@@ -131,6 +132,11 @@ export default function ApplicationsView({
 
     return app.status || 'DRAFT'
   }
+
+  const username = loginData?.username?.toLowerCase()
+  const canEditApplication = username === 'vinay' || username === 'narauser' || username === 'dsnruser'
+  const canEditEstimation = username === 'vinay'
+  const canEditPayment = username === 'vinay'
 
   const getStatusStyle = (status) => {
     switch (status?.toUpperCase()) {
@@ -352,7 +358,7 @@ export default function ApplicationsView({
         </button>
 
         {/* Completion Warning — only show for DRAFT apps that are genuinely incomplete */}
-        {!detailLoading && isDraft && !detailComplete && (
+        {!detailLoading && isDraft && !detailComplete && canEditApplication && (
           <div className="flex items-start gap-3 p-4 bg-amber-50 border-2 border-amber-200 rounded-xl">
             <AlertCircle className="text-amber-600 flex-shrink-0 mt-0.5" size={20} />
             <div>
@@ -520,7 +526,7 @@ export default function ApplicationsView({
                 // Invoice matched by application_id from search API
                 const appInv = detailData?.invoice || getAppInvoice(appId)
                 const hasInvoice = !!appInv?.invoice_no || !!appInv?.invoice_id
-                const hasInvoiceItems = !!appInv?.has_items || !!appInv?.items_count || (appInv?.invoice_items?.length > 0)
+                const hasInvoiceItems = !!appInv?.has_items || !!appInv?.items_count || (appInv?.invoice_items?.length > 0) || (appInv?.items?.length > 0)
                 const hasSettlement = !!appInv?.settlement_id || !!appInv?.payment_mode || !!appInv?.settlement_status
 
                 const paymentComplete = hasInvoice && hasSettlement
@@ -533,16 +539,16 @@ export default function ApplicationsView({
                 if (paymentComplete || isSubmitted) completedPdfs.push({ label: 'Payment Voucher', mode: 'payment-pdf' })
 
                 let nextAction = null
-                const canEditOrnaments = !isSubmitted && selectedApplication?.status === 'DRAFT'
+                const canEditOrnaments = !isSubmitted && selectedApplication?.status === 'DRAFT' && canEditApplication
                 if (!isSubmitted) {
                   const isPledgeType = selectedApplication?.application_type === 'PLEDGE_RELEASE'
-                  if (isPledgeType && !hasPledge) {
+                  if (isPledgeType && !hasPledge && canEditApplication) {
                     nextAction = { label: 'Continue — Pledge Details', action: () => handleEditApplication(selectedApplication) }
-                  } else if (!hasOrn) {
+                  } else if (!hasOrn && canEditApplication) {
                     nextAction = { label: 'Continue — Add Ornaments', action: () => handleEditApplication(selectedApplication) }
-                  } else if (!hasEst) {
+                  } else if (!hasEst && canEditEstimation) {
                     nextAction = { label: 'Continue — Estimation', action: () => navigate('/estimation', { state: { application: detailData } }) }
-                  } else if (!paymentComplete) {
+                  } else if (!paymentComplete && canEditPayment) {
                     let paymentStep = 1
                     if (hasInvoice && !hasInvoiceItems) paymentStep = 2
                     else if (hasInvoice && hasInvoiceItems && !hasSettlement) paymentStep = 3
@@ -556,7 +562,9 @@ export default function ApplicationsView({
                             applicationId: appId,
                             estimation_no: appEst?.estimation_no || '',
                             items: estItems,
-                            grandTotal: appEst?.summary?.total_net_amount || appEst?.total_net_amount || 0
+                            grandTotal: appEst?.summary?.total_net_amount || appEst?.total_net_amount || 0,
+                            forceFirstPage: true,
+                            startStep: 1
                           }
                         })
                       }
@@ -576,6 +584,23 @@ export default function ApplicationsView({
                         ))}
                       </div>
                     )}
+                    <div className="flex flex-wrap justify-center gap-3 pt-4">
+                      {canEditApplication && (
+                        <button onClick={() => handleEditApplication(selectedApplication)} className="flex items-center gap-2 px-6 py-3 text-white font-semibold rounded-xl shadow-lg text-sm" style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}>
+                          <Edit size={16} /> Edit Application
+                        </button>
+                      )}
+                      {canEditEstimation && (
+                        <button onClick={() => navigate('/estimation', { state: { application: detailData } })} className="flex items-center gap-2 px-6 py-3 text-white font-semibold rounded-xl shadow-lg text-sm" style={{ background: 'linear-gradient(135deg, #047857, #065f46)' }}>
+                          <Calculator size={16} /> Edit Estimation
+                        </button>
+                      )}
+                      {canEditPayment && (
+                        <button onClick={() => navigate('/payment', { state: { application: detailData, items: estItems, grandTotal: appEst?.summary?.total_net_amount || appEst?.total_net_amount || 0, forceFirstPage: true, startStep: 1 } })} className="flex items-center gap-2 px-6 py-3 text-white font-semibold rounded-xl shadow-lg text-sm" style={{ background: 'linear-gradient(135deg, #7c2d12, #9a3412)' }}>
+                          <CreditCard size={16} /> Edit Payment
+                        </button>
+                      )}
+                    </div>
                     {nextAction && (
                       <div className="flex justify-center">
                         <button onClick={nextAction.action} className="flex items-center gap-2 px-8 py-3 text-white font-semibold rounded-xl shadow-lg text-sm" style={{ background: 'linear-gradient(135deg, #c9943a, #a36e24)' }}>
@@ -665,7 +690,6 @@ export default function ApplicationsView({
                   <button onClick={() => handleViewApplication(app)} className="flex items-center gap-2 px-5 py-2.5 bg-amber-50 text-amber-700 font-semibold rounded-xl hover:bg-amber-100 transition-all">
                     <Eye size={16} /> View
                   </button>
-                  
                   {isDraft && (
                     <button onClick={() => handleDeleteApplication(app)} className="flex items-center gap-2 px-5 py-2.5 bg-red-50 text-red-700 font-semibold rounded-xl hover:bg-red-100 transition-all">
                       <Trash2 size={16} /> Delete

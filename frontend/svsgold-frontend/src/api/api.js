@@ -132,11 +132,13 @@ export const applicationsAPI = {
   getOrnamentsByApplication: (mobile, applicationId) => api.get(`/applications/ornaments/by-application?mobile=${mobile}&application_id=${applicationId}`),
   getEstimationPreview: (mobile, applicationId) => api.get(`/applications/estimation-preview?mobile=${mobile}&application_id=${applicationId}`),
   createApplication: (data) => api.post('/applications/create', data),
+  updateApplication: (data) => api.put('/applications/update', data),
   deleteApplication: (data) => api.delete('/applications/delete', { data }),
   addPledgeDetails: (data) => api.post('/applications/pledge-details', data),
   addOrnaments: (data) => api.post('/applications/ornaments', data),
   deleteOrnament: (itemId, mobile) => api.delete(`/applications/ornaments/${itemId}?mobile=${mobile}`),
   addEstimation: (data) => api.post('/estimations/items', data),
+  deleteEstimationItems: (mobile, applicationId) => api.delete(`/estimations/items?mobile=${encodeURIComponent(mobile)}&application_id=${encodeURIComponent(applicationId)}`),
   
 }
 
@@ -163,6 +165,7 @@ export const enquiriesAPI = {
 export const paymentsAPI = {
   createInvoice: (data) => api.post('/payments/invoice/create', data),
   addInvoiceItem: (data) => api.post('/payments/invoice/item', data),
+  clearInvoiceItems: (mobile, applicationId) => api.delete(`/payments/invoice/items?mobile=${encodeURIComponent(mobile)}&application_id=${encodeURIComponent(applicationId)}`),
   addDeduction: (data) => api.post('/payments/deduction', data),
   addSettlement: (data) => api.post('/payments/settlement', data),
 }

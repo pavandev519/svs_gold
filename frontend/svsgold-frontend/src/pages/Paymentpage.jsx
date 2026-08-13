@@ -13,6 +13,8 @@ export default function PaymentPage() {
   const location = useLocation()
   const navigate = useNavigate()
   const appData = location.state?.application
+  const existingInvoice = appData?.invoice || appData?._invoice || {}
+  const existingInvoiceItems = existingInvoice.invoice_items ?? existingInvoice.items ?? []
   const storedBranchInfo = (() => {
     try {
       return JSON.parse(sessionStorage.getItem('svs_payment_branch_info') || 'null')
@@ -28,6 +30,7 @@ export default function PaymentPage() {
 
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [branchInfo, setBranchInfo] = useState(appData?.branch_info || storedBranchInfo || null)
+  const forceFirstPage = Boolean(location.state?.forceFirstPage)
 
   // Fetch branch info
   useEffect(() => {
@@ -59,43 +62,91 @@ export default function PaymentPage() {
       } catch {}
     })()
   }, [appData])
-  const [step, setStep] = useState(1)
+  const [step, setStep] = useState(location.state?.startStep || 1)
+  const [allComplete, setAllComplete] = useState(forceFirstPage ? false : Boolean(existingInvoice.settlement_id || existingInvoice.settlement_status))
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!forceFirstPage) return
+    setStep(1)
+    setAllComplete(false)
+  }, [forceFirstPage])
+
+  useEffect(() => {
+    if (forceFirstPage) return
+    if (!existingInvoice || !existingInvoice.invoice_no) return
+    if (existingInvoiceItems.length > 0) {
+      setStep(2)
+    }
+    if (existingInvoice.settlement_id || existingInvoice.settlement_status) {
+      setAllComplete(true)
+    }
+  }, [existingInvoice, existingInvoiceItems, forceFirstPage])
 
   // Pledge total due for settlement calculation
   const pledgeDue = parseFloat(appData?.pledge_details?.total_due || appData?._appPledge?.total_due || 0)
 
+  const appId = appData?.application?.application_id || appData?.applicationId || null
   const [invoice, setInvoice] = useState({
-    mobile: loggedInMobile, invoice_no: `INV-${Date.now()}`,
-    invoice_date: new Date().toISOString().split('T')[0],
-    total_net_amount: estimationTotal, amount_in_words: '', remarks: ''
+    mobile: loggedInMobile,
+    application_id: appId,
+    invoice_no: existingInvoice.invoice_no || `INV-${Date.now()}`,
+    invoice_date: existingInvoice.invoice_date || new Date().toISOString().split('T')[0],
+    total_net_amount: existingInvoice.total_net_amount || estimationTotal,
+    amount_in_words: existingInvoice.amount_in_words || '',
+    remarks: existingInvoice.remarks || ''
   })
 
   const [invoiceItems, setInvoiceItems] = useState(
-    estimationItems.length > 0
+    existingInvoiceItems.length > 0
+      ? existingInvoiceItems.map((item, i) => ({
+          id: item.id || item.item_id || Date.now() + i,
+          mobile: loggedInMobile,
+          item_name: item.item_name || DEFAULT_PAYMENT_ITEM_NAME,
+          weight_before_melting: item.weight_before_melting ?? item.gross_weight_gms ?? 0,
+          weight_after_melting: item.weight_after_melting ?? item.wt_after ?? item.cal_wt_after ?? item.refinery_weight ?? 0,
+          purity_after_melting: item.purity_after_melting ?? item.purity_percentage ?? 0,
+          gold_rate_per_gm: item.gold_rate_per_gm ?? 0,
+          gross_amount: item.gross_amount ?? 0,
+          deduction_percentage: item.deduction_percentage ?? 0,
+          deductions_amount: item.deductions_amount ?? 0,
+          net_amount: item.net_amount ?? 0,
+          _savedItemId: item.invoice_item_id || item.id || null
+        }))
+      : estimationItems.length > 0
       ? estimationItems.map((item, i) => {
           const netWt = Math.round(((parseFloat(item.gross_weight_gms) || 0) - (parseFloat(item.stone_weight_gms) || 0)) * 100) / 100
           return {
             id: Date.now() + i, mobile: loggedInMobile, item_name: DEFAULT_PAYMENT_ITEM_NAME,
-            weight_before_melting: netWt || item.gross_weight_gms || 0, weight_after_melting: 0,
-            purity_after_melting: item.purity_percentage || 0, gold_rate_per_gm: item.gold_rate_per_gm || 0,
-            gross_amount: 0, deduction_percentage: item.deduction_percentage || 0, deductions_amount: 0, net_amount: 0, _savedItemId: null
+            weight_before_melting: item.weight_before_melting ?? netWt ?? item.gross_weight_gms ?? 0,
+            weight_after_melting: item.weight_after_melting ?? item.wt_after ?? item.cal_wt_after ?? item.refinery_weight ?? 0,
+            purity_after_melting: item.purity_after_melting ?? item.purity_percentage ?? 0,
+            gold_rate_per_gm: item.gold_rate_per_gm ?? 0,
+            gross_amount: item.gross_amount ?? 0,
+            deduction_percentage: item.deduction_percentage ?? 0,
+            deductions_amount: item.deductions_amount ?? 0,
+            net_amount: item.net_amount ?? 0,
+            _savedItemId: item.invoice_item_id || item.id || null
           }
         })
       : []
   )
 
   const [settlement, setSettlement] = useState({
-    mobile: loggedInMobile, payment_mode: 'BANK_TRANSFER', paid_amount: 0,
-    payment_date: new Date().toISOString().split('T')[0], reference_no: '', bank_name: ''
+    mobile: loggedInMobile,
+    payment_mode: existingInvoice.payment_mode || 'BANK_TRANSFER',
+    paid_amount: existingInvoice.paid_amount || 0,
+    payment_date: existingInvoice.payment_date || new Date().toISOString().split('T')[0],
+    reference_no: existingInvoice.reference_no || '',
+    bank_name: existingInvoice.bank_name || ''
   })
 
-  const [allComplete, setAllComplete] = useState(false)
   const [checkingProgress, setCheckingProgress] = useState(true)
 
   // Detect actual payment progress from search API by application_id
   useEffect(() => {
+    if (forceFirstPage) { setCheckingProgress(false); return }
     if (!loggedInMobile) { setCheckingProgress(false); return }
 
     const detectProgress = async () => {
@@ -138,7 +189,7 @@ export default function PaymentPage() {
     }
 
     detectProgress()
-  }, [loggedInMobile])
+  }, [loggedInMobile, forceFirstPage])
 
   // Save step progress to localStorage as backup
   const saveProgress = (stepNum, data) => {
@@ -205,20 +256,23 @@ export default function PaymentPage() {
       if (wtAfter <= 0) { setError(`Item ${i+1}: weight after melting must be greater than 0`); return }
       if (wtAfter > wtBefore) { setError(`Item ${i+1}: weight after melting cannot be greater than weight before melting`); return }
       if (String(invoiceItems[i].purity_after_melting).includes('.')) { setError(`Item ${i+1}: purity must be a whole number (no decimals)`); return }
-      if (!dedPct || dedPct < 0.5) { setError(`Item ${i+1}: deduction % must be at least 0.5%`); return }
+      if (!dedPct || dedPct <= 0.5) { setError(`Item ${i+1}: deduction % must be greater than 0.5%`); return }
     }
     try {
       setLoading(true); setError('')
       const normalizedItems = invoiceItems.map(item => ({ ...item, item_name: DEFAULT_PAYMENT_ITEM_NAME }))
       const words = numberToWords(Math.round(payableAmount > 0 ? payableAmount : itemsTotal)) + ' Rupees Only'
-      await paymentsAPI.createInvoice({ ...invoice, total_net_amount: itemsTotal, amount_in_words: words })
-      setInvoice(p => ({ ...p, total_net_amount: itemsTotal, amount_in_words: words }))
+      if (appId && existingInvoice.invoice_no && existingInvoiceItems.length > 0) {
+        await paymentsAPI.clearInvoiceItems(loggedInMobile, appId)
+      }
+      await paymentsAPI.createInvoice({ ...invoice, application_id: appId, total_net_amount: itemsTotal, amount_in_words: words })
+      setInvoice(p => ({ ...p, application_id: appId, total_net_amount: itemsTotal, amount_in_words: words }))
 
       // Save items
       const saved = []
       for (const item of normalizedItems) {
         const { id, _savedItemId, ...p } = item
-        const r = await paymentsAPI.addInvoiceItem(p)
+        const r = await paymentsAPI.addInvoiceItem({ ...p, application_id: appId })
         saved.push({ ...item, _savedItemId: r.data?.invoice_item_id || r.data?.id || null })
       }
       setInvoiceItems(saved)
@@ -380,19 +434,19 @@ export default function PaymentPage() {
                         <div>
                           <label className={labelClass}>
                             Deductions (%)
-                            {parseFloat(item.deduction_percentage) > 0 && parseFloat(item.deduction_percentage) < 0.5 && (
-                              <span className="text-red-500 text-xs ml-2 font-semibold">Min 0.5%</span>
+                            {parseFloat(item.deduction_percentage) > 0 && parseFloat(item.deduction_percentage) <= 0.5 && (
+                              <span className="text-red-500 text-xs ml-2 font-semibold">&gt; 0.5%</span>
                             )}
                           </label>
                           <input 
                             type="text" 
                             value={item.deduction_percentage} 
                             onChange={e => updateInvoiceItem(idx, 'deduction_percentage', e.target.value.replace(/[^0-9.]/g,''))} 
-                            className={`${inputClass} ${parseFloat(item.deduction_percentage) > 0 && parseFloat(item.deduction_percentage) < 0.5 ? 'border-red-500 border-2' : ''}`}
-                            placeholder="≥ 0.5%"
+                            className={`${inputClass} ${parseFloat(item.deduction_percentage) > 0 && parseFloat(item.deduction_percentage) <= 0.5 ? 'border-red-500 border-2' : ''}`}
+                            placeholder="> 0.5%"
                           />
-                          {parseFloat(item.deduction_percentage) > 0 && parseFloat(item.deduction_percentage) < 0.5 && (
-                            <p className="mt-1 text-xs text-red-600">Minimum 0.5% required</p>
+                          {parseFloat(item.deduction_percentage) > 0 && parseFloat(item.deduction_percentage) <= 0.5 && (
+                            <p className="mt-1 text-xs text-red-600">Processing/Deduction must be greater than 0.5%</p>
                           )}
                         </div>
                       </div>

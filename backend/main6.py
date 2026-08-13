@@ -9,7 +9,7 @@ from models5 import (
     AccountCheckRequest, AccountCheckResponse,
     AccountCreateRequest, AccountCreateResponse,
     AccountUpdateRequest,
-    ApplicationCreateRequest, ApplicationResponse, ApplicationDeleteRequest,
+    ApplicationCreateRequest, ApplicationResponse, ApplicationUpdateRequest, ApplicationDeleteRequest,
     ApplicationListItem, ApplicationListResponse,
     OrnamentCreateRequest, OrnamentCreateResponse,
     EstimationItemCreateRequest, EstimationResponse,
@@ -1353,6 +1353,80 @@ def create_application(payload: ApplicationCreateRequest):
         conn.close()
 
 
+@app.put("/applications/update", response_model=ApplicationResponse)
+def update_application(payload: ApplicationUpdateRequest):
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        account_id = get_account_id(cur, payload.mobile)
+
+        cur.execute(
+            """
+            SELECT application_id
+            FROM gold_schema.applications
+            WHERE account_id = %s
+              AND application_id = %s
+            LIMIT 1
+            """,
+            (account_id, payload.application_id)
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Application not found")
+
+        updates = []
+        params = []
+
+        if payload.application_type is not None:
+            updates.append('application_type = %s')
+            params.append(payload.application_type)
+        if payload.application_date is not None:
+            updates.append('application_date = %s')
+            params.append(payload.application_date)
+        if payload.application_no is not None:
+            updates.append('application_no = %s')
+            params.append(payload.application_no)
+        if payload.place is not None:
+            updates.append('place = %s')
+            params.append(payload.place)
+        if payload.status is not None:
+            updates.append('status = %s')
+            params.append(payload.status)
+
+        if updates:
+            params.extend([account_id, payload.application_id])
+            cur.execute(
+                f"""
+                UPDATE gold_schema.applications
+                SET {', '.join(updates)}
+                WHERE account_id = %s
+                  AND application_id = %s
+                """,
+                tuple(params)
+            )
+
+        cur.execute(
+            """
+            SELECT application_id, application_no, status
+            FROM gold_schema.applications
+            WHERE account_id = %s AND application_id = %s
+            LIMIT 1
+            """,
+            (account_id, payload.application_id)
+        )
+        row = cur.fetchone()
+        conn.commit()
+
+        return {
+            "application_id": row[0],
+            "application_no": row[1],
+            "status": row[2]
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
 @app.get("/applications/by-user", response_model=ApplicationListResponse)
 def get_applications_by_user(
     mobile: str = Query(...),
@@ -1774,8 +1848,12 @@ def create_ornaments(payload: OrnamentCreateRequest):
 
         application_id, application_no, status = row
 
+        kept_item_ids = set()
+
+        # Upsert each ornament and keep track of the rows that should remain.
         for item in payload.ornaments:
-            if getattr(item, 'item_id', None):
+            item_id = getattr(item, 'item_id', None)
+            if item_id:
                 cur.execute(
                     """
                     SELECT 1
@@ -1784,7 +1862,7 @@ def create_ornaments(payload: OrnamentCreateRequest):
                       AND item_id = %s
                     LIMIT 1
                     """,
-                    (application_id, item.item_id)
+                    (application_id, item_id)
                 )
                 if cur.fetchone():
                     cur.execute(
@@ -1803,9 +1881,10 @@ def create_ornaments(payload: OrnamentCreateRequest):
                             item.purity_percentage,
                             item.approx_weight_gms,
                             item.item_photo_url,
-                            item.item_id
+                            item_id
                         )
                     )
+                    kept_item_ids.add(item_id)
                     continue
 
             cur.execute(
@@ -1817,6 +1896,7 @@ def create_ornaments(payload: OrnamentCreateRequest):
                   AND purity_percentage = %s
                   AND approx_weight_gms = %s
                   AND item_photo_url = %s
+                  AND item_id NOT IN %s
                 LIMIT 1
                 """,
                 (
@@ -1824,12 +1904,14 @@ def create_ornaments(payload: OrnamentCreateRequest):
                     item.item_name,
                     item.purity_percentage,
                     item.approx_weight_gms,
-                    item.item_photo_url
+                    item.item_photo_url,
+                    tuple(kept_item_ids) if kept_item_ids else (-1,)
                 )
             )
             existing = cur.fetchone()
 
             if existing:
+                existing_id = existing[0]
                 cur.execute(
                     """
                     UPDATE gold_schema.ornaments
@@ -1838,9 +1920,10 @@ def create_ornaments(payload: OrnamentCreateRequest):
                     """,
                     (
                         item.quantity,
-                        existing[0]
+                        existing_id
                     )
                 )
+                kept_item_ids.add(existing_id)
             else:
                 cur.execute(
                     """
@@ -1850,6 +1933,7 @@ def create_ornaments(payload: OrnamentCreateRequest):
                         approx_weight_gms, item_photo_url
                     )
                     VALUES (%s,%s,%s,%s,%s,%s)
+                    RETURNING item_id
                     """,
                     (
                         application_id,
@@ -1860,6 +1944,26 @@ def create_ornaments(payload: OrnamentCreateRequest):
                         item.item_photo_url
                     )
                 )
+                new_id = cur.fetchone()[0]
+                kept_item_ids.add(new_id)
+
+        if kept_item_ids:
+            cur.execute(
+                """
+                DELETE FROM gold_schema.ornaments
+                WHERE application_id = %s
+                  AND item_id NOT IN %s
+                """,
+                (application_id, tuple(kept_item_ids))
+            )
+        else:
+            cur.execute(
+                """
+                DELETE FROM gold_schema.ornaments
+                WHERE application_id = %s
+                """,
+                (application_id,)
+            )
 
         cur.execute(
             """
@@ -2008,22 +2112,38 @@ def add_estimation_item(payload: EstimationItemCreateRequest):
     try:
         account_id = get_account_id(cur, payload.mobile)
 
-        cur.execute(
-            """
-            SELECT application_id
-            FROM gold_schema.applications
-            WHERE account_id=%s
-            AND status IN ('DRAFT','SUBMITTED','APPROVED')
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (account_id,)
-        )
-        row = cur.fetchone()
-        if not row:
-            raise HTTPException(409, "No active application")
-
-        application_id = row[0]
+        if getattr(payload, 'application_id', None):
+            cur.execute(
+                """
+                SELECT application_id
+                FROM gold_schema.applications
+                WHERE account_id=%s
+                  AND application_id=%s
+                  AND status IN ('DRAFT','SUBMITTED','APPROVED')
+                LIMIT 1
+                """,
+                (account_id, payload.application_id)
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(409, "No active application for estimation")
+            application_id = row[0]
+        else:
+            cur.execute(
+                """
+                SELECT application_id
+                FROM gold_schema.applications
+                WHERE account_id=%s
+                AND status IN ('DRAFT','SUBMITTED','APPROVED')
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (account_id,)
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(409, "No active application")
+            application_id = row[0]
 
         cur.execute(
             """
@@ -2208,6 +2328,83 @@ def add_estimation_item(payload: EstimationItemCreateRequest):
         conn.close()
 
 
+@app.delete("/estimations/items")
+def delete_estimation_items(mobile: str = Query(...), application_id: int = Query(...), preview: bool = Query(False)):
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        account_id = get_account_id(cur, mobile)
+        cur.execute(
+            """
+            SELECT e.estimation_id
+            FROM gold_schema.estimation_application_map m
+            JOIN gold_schema.estimations e ON e.estimation_id = m.estimation_id
+            JOIN gold_schema.applications a ON a.application_id = m.application_id
+            WHERE a.account_id = %s
+              AND m.application_id = %s
+            LIMIT 1
+            """,
+            (account_id, application_id)
+        )
+        row = cur.fetchone()
+        if not row:
+            if preview:
+                return {"preview": True, "deleted_items": 0}
+            raise HTTPException(409, "No estimation found for application")
+
+        estimation_id = row[0]
+        if preview:
+            cur.execute("SELECT COUNT(*) FROM gold_schema.estimation_items WHERE estimation_id = %s", (estimation_id,))
+            count = cur.fetchone()[0] or 0
+            return {"preview": True, "estimation_id": estimation_id, "item_count": count}
+
+        cur.execute("DELETE FROM gold_schema.estimation_items WHERE estimation_id = %s", (estimation_id,))
+        deleted_items = cur.rowcount
+        conn.commit()
+        return {"deleted_items": deleted_items, "estimation_id": estimation_id}
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.delete("/payments/invoice/items")
+def delete_payment_invoice_items(mobile: str = Query(...), application_id: int = Query(...), preview: bool = Query(False)):
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        account_id = get_account_id(cur, mobile)
+        cur.execute(
+            """
+            SELECT payment_invoice_id
+            FROM gold_schema.payment_invoices
+            WHERE account_id = %s
+              AND application_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (account_id, application_id)
+        )
+        row = cur.fetchone()
+        if not row:
+            if preview:
+                return {"preview": True, "deleted_items": 0}
+            raise HTTPException(409, "No invoice found for application")
+
+        invoice_id = row[0]
+        if preview:
+            cur.execute("SELECT COUNT(*) FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = %s", (invoice_id,))
+            count = cur.fetchone()[0] or 0
+            return {"preview": True, "payment_invoice_id": invoice_id, "item_count": count}
+
+        cur.execute("DELETE FROM gold_schema.payment_invoice_items WHERE payment_invoice_id = %s", (invoice_id,))
+        deleted_items = cur.rowcount
+        conn.commit()
+        return {"deleted_items": deleted_items, "payment_invoice_id": invoice_id}
+    finally:
+        cur.close()
+        conn.close()
+
+
 @app.post("/payments/invoice/create", response_model=PaymentInvoiceResponse)
 def create_payment_invoice(payload: PaymentInvoiceCreateRequest):
     conn = get_connection()
@@ -2228,24 +2425,53 @@ def create_payment_invoice(payload: PaymentInvoiceCreateRequest):
                 "payment_status": existing_invoice[1]
             }
 
-        # Get latest application + estimation
-        cur.execute("""
-            SELECT a.application_id, e.estimation_id
-            FROM gold_schema.applications a
-            JOIN gold_schema.estimation_application_map m
-                ON m.application_id = a.application_id
-            JOIN gold_schema.estimations e
-                ON e.estimation_id = m.estimation_id
-            WHERE a.account_id = %s
-            ORDER BY a.created_at DESC
-            LIMIT 1
-        """, (account_id,))
-        row = cur.fetchone()
+        if getattr(payload, 'application_id', None):
+            cur.execute(
+                """
+                SELECT application_id
+                FROM gold_schema.applications
+                WHERE account_id=%s
+                  AND application_id=%s
+                LIMIT 1
+                """,
+                (account_id, payload.application_id)
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(409, "No application found for payment")
+            application_id = row[0]
+            cur.execute(
+                """
+                SELECT estimation_id
+                FROM gold_schema.estimation_application_map
+                WHERE application_id=%s
+                LIMIT 1
+                """,
+                (application_id,)
+            )
+            est_row = cur.fetchone()
+            if not est_row:
+                raise HTTPException(409, "No estimation found for application")
+            estimation_id = est_row[0]
+        else:
+            # Get latest application + estimation
+            cur.execute("""
+                SELECT a.application_id, e.estimation_id
+                FROM gold_schema.applications a
+                JOIN gold_schema.estimation_application_map m
+                    ON m.application_id = a.application_id
+                JOIN gold_schema.estimations e
+                    ON e.estimation_id = m.estimation_id
+                WHERE a.account_id = %s
+                ORDER BY a.created_at DESC
+                LIMIT 1
+            """, (account_id,))
+            row = cur.fetchone()
 
-        if not row:
-            raise HTTPException(409, "No application/estimation found")
+            if not row:
+                raise HTTPException(409, "No application/estimation found")
 
-        application_id, estimation_id = row
+            application_id, estimation_id = row
 
         cur.execute("SELECT COALESCE(SUM(net_amount),0) FROM gold_schema.estimation_items WHERE estimation_id=%s", (estimation_id,))
         #payload_total = cur.fetchone()[0]
@@ -2296,14 +2522,25 @@ def add_invoice_item(payload: PaymentInvoiceItemCreateRequest):
     try:
         account_id = get_account_id(cur, payload.mobile)
 
-        cur.execute("""
-            SELECT payment_invoice_id
-            FROM gold_schema.payment_invoices
-            WHERE account_id = %s
-            ORDER BY created_at DESC
-            LIMIT 1
-        """, (account_id,))
-        row = cur.fetchone()
+        if getattr(payload, 'application_id', None):
+            cur.execute("""
+                SELECT payment_invoice_id
+                FROM gold_schema.payment_invoices
+                WHERE account_id = %s
+                  AND application_id = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (account_id, payload.application_id))
+            row = cur.fetchone()
+        else:
+            cur.execute("""
+                SELECT payment_invoice_id
+                FROM gold_schema.payment_invoices
+                WHERE account_id = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (account_id,))
+            row = cur.fetchone()
 
         if not row:
             raise HTTPException(409, "No invoice found")
