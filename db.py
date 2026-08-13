@@ -39,4 +39,11 @@ class PooledConnection:
 
 
 def get_connection():
-    return PooledConnection(connection_pool.getconn())
+    conn = connection_pool.getconn()
+    if conn.closed:
+        try:
+            connection_pool.putconn(conn, close=True)
+        except Exception:
+            pass
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10, sslmode="require")
+    return PooledConnection(conn)
