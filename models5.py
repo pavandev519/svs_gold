@@ -147,6 +147,16 @@ class ApplicationResponse(BaseModel):
     status: str
 
 
+class ApplicationUpdateRequest(BaseModel):
+    mobile: str
+    application_id: int
+    application_type: Optional[str] = None
+    application_date: Optional[date] = None
+    application_no: Optional[str] = None
+    place: Optional[str] = None
+    status: Optional[str] = None
+
+
 class ApplicationDeleteRequest(BaseModel):
     mobile: str
     application_id: int
@@ -225,6 +235,7 @@ class OrnamentCreateResponse(BaseModel):
 class EstimationItemCreateRequest(BaseModel):
     mobile: str
     estimation_no: str
+    application_id: Optional[int] = None
 
     item_name: Optional[str] = None
     quantity: int = 1
