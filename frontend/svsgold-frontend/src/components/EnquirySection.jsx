@@ -573,9 +573,9 @@ for (const field of numericFields) {
     return
   }
 }
-  // Ensure processing fee is greater than 0.5% when provided
-  if (form.processing_fee !== '' && Number(form.processing_fee) <= 0.5) {
-    setError('Processing fee must be greater than 0.5%')
+  // Ensure processing fee is at least 0.5% when provided
+  if (form.processing_fee !== '' && Number(form.processing_fee) < 0.5) {
+    setError('Processing fee must be at least 0.5%')
     return
   }
     setSaving(true)

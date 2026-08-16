@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import ApplicationForm from './ApplicationForm'
 import ApplicationPreview from './ApplicationPreview'
-import { applicationsAPI, accountsAPI } from '../api/api'
+import { applicationsAPI, accountsAPI, estimationsAPI } from '../api/api'
 import { formatDate } from '../utils/validation'
 
 const PAYMENT_ITEM_NAME = 'Melted Gold'
@@ -134,9 +134,57 @@ export default function ApplicationsView({
   }
 
   const username = loginData?.username?.toLowerCase()
-  const canEditApplication = username === 'vinay' || username === 'narauser' || username === 'dsnruser'
-  const canEditEstimation = username === 'vinay'
-  const canEditPayment = username === 'vinay'
+
+  // Who can operate the draft flow (create/edit ornaments, estimation, proceed to payment)
+  const canOperateDraft = (app) => {
+    // If there's no app yet (creating new), allow the flow
+    if (!app) return true
+    const status = (app?.status || '').toUpperCase()
+    if (status !== 'DRAFT') return false
+    // Vinay can always operate drafts
+    if (username === 'vinay') return true
+    // Staff users (logged-in branch users) should be able to operate drafts
+    if (loginData?.branchName) return true
+    // The creator (owner mobile) can operate their own draft (customer-owned mobile)
+    const ownerMobile = app?.application?.mobile || app?.mobile || app?.account?.mobile
+    const currentMobile = userIdentifier
+    if (currentMobile && ownerMobile && String(currentMobile) === String(ownerMobile)) return true
+    // Otherwise not allowed
+    return false
+  }
+
+  // Who can edit submitted apps
+  const canEditSubmitted = (app) => {
+    if (!app) return false
+    const status = (app?.status || '').toUpperCase()
+    if (status !== 'SUBMITTED') return false
+    if (username === 'vinay') return true
+    if (username === 'narauser' || username === 'dsnruser') return true
+    return false
+  }
+
+  // Main application edit permission: depends on status
+  const canEditApplication = (app) => {
+    const status = (app?.status || '').toUpperCase()
+    if (status === 'DRAFT' || !status) return canOperateDraft(app)
+    if (status === 'SUBMITTED') return canEditSubmitted(app)
+    // For other statuses (APPROVED/COMPLETED/REJECTED) only vinay can edit
+    return username === 'vinay'
+  }
+
+  // Estimation: allow during draft for creator/vinay, otherwise only vinay
+  const canEditEstimation = (app) => {
+    const status = (app?.status || '').toUpperCase()
+    if (status === 'DRAFT' || !status) return canOperateDraft(app)
+    return username === 'vinay'
+  }
+
+  // Payment: allow during draft for creator/vinay; after submission, allow vinay and branch users (nara/dsnr)
+  const canEditPayment = (app) => {
+    const status = (app?.status || '').toUpperCase()
+    if (status === 'DRAFT' || !status) return canOperateDraft(app)
+    return canEditSubmitted(app)
+  }
 
   const getStatusStyle = (status) => {
     switch (status?.toUpperCase()) {
@@ -358,7 +406,7 @@ export default function ApplicationsView({
         </button>
 
         {/* Completion Warning — only show for DRAFT apps that are genuinely incomplete */}
-        {!detailLoading && isDraft && !detailComplete && canEditApplication && (
+        {!detailLoading && isDraft && !detailComplete && canEditApplication(selectedApplication) && (
           <div className="flex items-start gap-3 p-4 bg-amber-50 border-2 border-amber-200 rounded-xl">
             <AlertCircle className="text-amber-600 flex-shrink-0 mt-0.5" size={20} />
             <div>
@@ -531,24 +579,27 @@ export default function ApplicationsView({
 
                 const paymentComplete = hasInvoice && hasSettlement
                 const isSubmitted = ['SUBMITTED','APPROVED','COMPLETED'].includes((selectedApplication?.status || '').toUpperCase())
+                // Exact submitted state (used to gate edit buttons as requested)
+                const isSubmittedExact = ((selectedApplication?.status || '').toUpperCase() === 'SUBMITTED')
 
                 const completedPdfs = []
                 // Show preview for applications with ornaments (helps users see what they're creating/have submitted)
                 if (hasOrn) completedPdfs.push({ label: 'Application Preview', mode: 'pdf' })
-                if (hasEst) completedPdfs.push({ label: 'Estimation', mode: 'estimation-pdf' })
+                // Show Estimation preview whenever there are estimation items OR ornaments
+                if (hasEst || hasOrn) completedPdfs.push({ label: 'Estimation', mode: 'estimation-pdf' })
                 if (paymentComplete || isSubmitted) completedPdfs.push({ label: 'Payment Voucher', mode: 'payment-pdf' })
 
                 let nextAction = null
-                const canEditOrnaments = !isSubmitted && selectedApplication?.status === 'DRAFT' && canEditApplication
+                const canEditOrnaments = !isSubmitted && selectedApplication?.status === 'DRAFT' && canEditApplication(selectedApplication)
                 if (!isSubmitted) {
                   const isPledgeType = selectedApplication?.application_type === 'PLEDGE_RELEASE'
-                  if (isPledgeType && !hasPledge && canEditApplication) {
+                  if (isPledgeType && !hasPledge && canEditApplication(selectedApplication)) {
                     nextAction = { label: 'Continue — Pledge Details', action: () => handleEditApplication(selectedApplication) }
-                  } else if (!hasOrn && canEditApplication) {
+                  } else if (!hasOrn && canEditApplication(selectedApplication)) {
                     nextAction = { label: 'Continue — Add Ornaments', action: () => handleEditApplication(selectedApplication) }
-                  } else if (!hasEst && canEditEstimation) {
+                  } else if (!hasEst && canEditEstimation(selectedApplication)) {
                     nextAction = { label: 'Continue — Estimation', action: () => navigate('/estimation', { state: { application: detailData } }) }
-                  } else if (!paymentComplete && canEditPayment) {
+                  } else if (!paymentComplete && canEditPayment(selectedApplication)) {
                     let paymentStep = 1
                     if (hasInvoice && !hasInvoiceItems) paymentStep = 2
                     else if (hasInvoice && hasInvoiceItems && !hasSettlement) paymentStep = 3
@@ -558,7 +609,7 @@ export default function ApplicationsView({
                       action: () => {
                         navigate('/payment', {
                           state: {
-                            application: previewData,
+                            application: detailData,
                             applicationId: appId,
                             estimation_no: appEst?.estimation_no || '',
                             items: estItems,
@@ -574,6 +625,7 @@ export default function ApplicationsView({
 
                 return (
                   <>
+                    {console.log('ApplicationsView debug', { appId, hasPledge, hasOrn, hasEst, hasInvoice, completedPdfs })}
                     {completedPdfs.length > 0 && (
                       <div className="flex justify-center gap-3 flex-wrap">
                         {completedPdfs.map(p => (
@@ -585,20 +637,26 @@ export default function ApplicationsView({
                       </div>
                     )}
                     <div className="flex flex-wrap justify-center gap-3 pt-4">
-                      {canEditApplication && (
+                      {/*
+                        Edit buttons are intentionally hidden until the application
+                        is in the SUBMITTED state. Per request:
+                        - `Edit Application` visible to `dsnruser`, `narauser`, and `vinay`.
+                        - `Edit Estimation` and `Edit Payment` visible only to `vinay`.
+                      */}
+                      {isSubmittedExact && (username === 'vinay' || username === 'narauser' || username === 'dsnruser') && (
                         <button onClick={() => handleEditApplication(selectedApplication)} className="flex items-center gap-2 px-6 py-3 text-white font-semibold rounded-xl shadow-lg text-sm" style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}>
                           <Edit size={16} /> Edit Application
                         </button>
                       )}
-                      {canEditEstimation && (
-                        <button onClick={() => navigate('/estimation', { state: { application: detailData } })} className="flex items-center gap-2 px-6 py-3 text-white font-semibold rounded-xl shadow-lg text-sm" style={{ background: 'linear-gradient(135deg, #047857, #065f46)' }}>
-                          <Calculator size={16} /> Edit Estimation
-                        </button>
-                      )}
-                      {canEditPayment && (
-                        <button onClick={() => navigate('/payment', { state: { application: detailData, items: estItems, grandTotal: appEst?.summary?.total_net_amount || appEst?.total_net_amount || 0, forceFirstPage: true, startStep: 1 } })} className="flex items-center gap-2 px-6 py-3 text-white font-semibold rounded-xl shadow-lg text-sm" style={{ background: 'linear-gradient(135deg, #7c2d12, #9a3412)' }}>
-                          <CreditCard size={16} /> Edit Payment
-                        </button>
+                      {isSubmittedExact && username === 'vinay' && (
+                        <>
+                          <button onClick={() => navigate('/estimation', { state: { application: detailData } })} className="flex items-center gap-2 px-6 py-3 text-white font-semibold rounded-xl shadow-lg text-sm" style={{ background: 'linear-gradient(135deg, #047857, #065f46)' }}>
+                            <Calculator size={16} /> Edit Estimation
+                          </button>
+                          <button onClick={() => navigate('/payment', { state: { application: detailData, items: estItems, grandTotal: appEst?.summary?.total_net_amount || appEst?.total_net_amount || 0, forceFirstPage: true, startStep: 1 } })} className="flex items-center gap-2 px-6 py-3 text-white font-semibold rounded-xl shadow-lg text-sm" style={{ background: 'linear-gradient(135deg, #7c2d12, #9a3412)' }}>
+                            <CreditCard size={16} /> Edit Payment
+                          </button>
+                        </>
                       )}
                     </div>
                     {nextAction && (
@@ -614,19 +672,17 @@ export default function ApplicationsView({
             </div>
 
             {/* Inline PDF Preview */}
-            {selectedPdf === 'pdf' && (
-              <div className="mt-6">
-                <ApplicationPreview application={selectedApplication} userIdentifier={userIdentifier} initialData={detailData} onBack={() => setSelectedPdf(null)} />
-              </div>
-            )}
-            {selectedPdf === 'estimation-pdf' && (
-              <div className="mt-6">
-                <EstimationPdfView userIdentifier={userIdentifier} applicationId={selectedApplication?.application_id} />
-              </div>
-            )}
-            {selectedPdf === 'payment-pdf' && (
-              <div className="mt-6">
-                <PaymentPdfView userIdentifier={userIdentifier} applicationId={selectedApplication?.application_id} />
+            {selectedPdf && (
+              <div key={selectedPdf} className="mt-6">
+                {selectedPdf === 'pdf' && (
+                  <ApplicationPreview application={selectedApplication} userIdentifier={userIdentifier} initialData={detailData} onBack={() => setSelectedPdf(null)} />
+                )}
+                    {selectedPdf === 'estimation-pdf' && (
+                  <EstimationPdfView userIdentifier={userIdentifier} applicationId={selectedApplication?.application_id} initialData={detailData} />
+                )}
+                {selectedPdf === 'payment-pdf' && (
+                  <PaymentPdfView userIdentifier={userIdentifier} applicationId={selectedApplication?.application_id} initialData={detailData} />
+                )}
               </div>
             )}
             </div>
@@ -730,64 +786,109 @@ function AmountCard({ label, amount, highlight = false, suffix = '' }) {
 /* ================================================================ */
 /*  ESTIMATION PDF VIEW — fetches data and shows estimation preview  */
 /* ================================================================ */
-function EstimationPdfView({ userIdentifier, applicationId }) {
-  const [data, setData] = React.useState(null)
-  const [loading, setLoading] = React.useState(true)
-  const [branchInfo, setBranchInfo] = React.useState(null)
+function EstimationPdfView({ userIdentifier, applicationId, initialData }) {
+  const [liveData, setLiveData] = useState(null)
+  const [liveLoading, setLiveLoading] = useState(false)
+  const [isPreviewFetching, setIsPreviewFetching] = useState(false)
 
-  React.useEffect(() => {
-    (async () => {
+  useEffect(() => {
+    if (!applicationId) return
+
+    const hasDetailedItems = !!(
+      initialData?.estimation?.items?.length ||
+      initialData?.estimation?.item_count ||
+      initialData?.items?.length ||
+      initialData?.estimations?.[0]?.items?.length
+    )
+
+    let active = true
+    setIsPreviewFetching(true)
+    setLiveLoading(true)
+
+    if (hasDetailedItems) {
+      setLiveData(initialData || null)
+      setLiveLoading(false)
+      setIsPreviewFetching(true)
+      const keepLoaderVisible = window.setTimeout(() => {
+        if (active) setIsPreviewFetching(false)
+      }, 800)
+      return () => {
+        active = false
+        window.clearTimeout(keepLoaderVisible)
+      }
+    }
+
+    const loadPreview = async () => {
       try {
-        const r = await accountsAPI.searchCustomerSummary(userIdentifier, "customer,addresses,documents,applications,estimations,pledge_details")
-        const d = r.data || {}
-        const ests = d.estimations || []
-        // Find estimation matching the applicationId, fallback to latest
-        const latest = applicationId
-          ? ests.find(e => e.application_id === applicationId) || (ests.length > 0 ? ests[ests.length - 1] : null)
-          : (ests.length > 0 ? ests[ests.length - 1] : null)
-        const allPledges = d.pledge_details || []
-        const targetAppId = applicationId || latest?.application_id
-        const appPledge = targetAppId ? allPledges.find(p => p.application_id === targetAppId) : allPledges[0]
-        // Always find app by applicationId first, fallback to estimation's app
-        const appObj = (d.applications || []).find(a => a.application_id === (applicationId || latest?.application_id)) || {}
+        const res = await applicationsAPI.getEstimationPreview(userIdentifier, applicationId)
+        if (!active) return
 
-        // Fetch branch info
-        try {
-          const br = await applicationsAPI.getBranches()
-          const branches = br.data?.branches || []
-          const place = (appObj.place || '').toLowerCase().trim()
-          if (place) {
-            let matched = branches.find(b => b.branch_name.toLowerCase() === place)
-            if (!matched) matched = branches.find(b => b.branch_name.toLowerCase().includes(place) || place.includes(b.branch_name.toLowerCase()))
-            if (matched) setBranchInfo(matched)
+        const payload = res?.data || null
+        if (!payload) {
+          setLiveData(null)
+          return
+        }
+
+        const documents = Array.isArray(payload.documents) ? payload.documents : []
+        const docsWithPreviews = await Promise.all(documents.map(async (doc) => {
+          if (doc?.document_id && !doc.file_path && !doc.preview_data) {
+            try {
+              const previewRes = await accountsAPI.previewDocument(userIdentifier, doc.document_id)
+              return {
+                ...doc,
+                file_path: previewRes?.data?.preview_data || previewRes?.data || doc.file_path || ''
+              }
+            } catch {
+              return doc
+            }
           }
-        } catch {}
+          return doc
+        }))
 
-        setData({
-          account: d.customer || {},
-          addresses: d.addresses || [],
-          documents: d.documents || [],
-          pledge_details: appPledge || null,
-          estimation: latest ? { ...latest, items: latest.items || [], summary: { total_net_amount: latest.total_net_amount, estimation_no: latest.estimation_no } } : {},
-          application: appObj
-        })
-      } catch {} finally { setLoading(false) }
-    })()
-  }, [userIdentifier, applicationId])
+        setLiveData({ ...payload, documents: docsWithPreviews })
+      } catch {
+        if (active) setLiveData(null)
+      } finally {
+        if (active) {
+          setLiveLoading(false)
+          setIsPreviewFetching(false)
+        }
+      }
+    }
 
-  if (loading) return <div className="text-center py-20"><Loader size={36} className="animate-spin mx-auto text-amber-600" /><p className="text-gray-600 mt-4">Loading Estimation...</p></div>
+    loadPreview()
+    return () => { active = false }
+  }, [applicationId, userIdentifier, initialData])
 
-  const acc = data?.account || {}
-  const addrs = data?.addresses || []
-  const docs = data?.documents || []
+  const data = liveData || initialData || null
+  const customer = data?.account || data?.customer || {}
+  const addrs = Array.isArray(data?.addresses) ? data.addresses : []
+  const docs = Array.isArray(data?.documents) ? data.documents : []
   const pledge = data?.pledge_details || {}
   const est = data?.estimation || {}
-  const items = est.items || []
+  const items = Array.isArray(data?.items) ? data.items : Array.isArray(est?.items) ? est.items : []
+  const hasDetailedData = !!(data?.estimation?.estimation_id || data?.items?.length || data?.estimation?.items?.length || items.length)
+  const hasLoadedData = !!((customer?.first_name || customer?.last_name || customer?.mobile || customer?.email || data?.application) && (items.length || est?.estimation_id || data?.application))
+  const loading = isPreviewFetching || liveLoading || (!hasLoadedData && !hasDetailedData && !liveData)
+  const branchInfo = null
+  const photoDataUrl = docs.find(d => /photo/i.test(d.document_type || ''))?.file_path || docs.find(d => /photo/i.test(d.document_type || ''))?.preview_data || customer?.photo_url || data?.account?.photo_url || ''
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-80 rounded-2xl border-2 border-dashed border-amber-200 bg-gradient-to-br from-amber-50 to-white shadow-inner">
+        <div className="w-14 h-14 rounded-full border-[5px] border-amber-200 border-t-amber-700 animate-spin shadow-sm" />
+        <p className="mt-4 text-lg font-bold text-amber-800">Loading estimation preview...</p>
+        <p className="mt-1 text-sm text-gray-600">Execution is still in progress. Please wait.</p>
+      </div>
+    )
+  }
+
+  const acc = customer
   const name = [acc.first_name, acc.last_name].filter(Boolean).join(' ')
   const present = addrs.find(a => /present|current/i.test(a.address_type)) || addrs[0] || {}
   const perm = addrs.find(a => /permanent/i.test(a.address_type)) || addrs[1] || present
   const photoDoc = docs.find(d => /photo/i.test(d.document_type || ''))
-  const photoUrl = acc.photo_url || photoDoc?.file_path || ''
+  const photoUrl = photoDataUrl || acc.photo_url || photoDoc?.file_path || ''
   const fA = (a) => [a?.address_line, a?.street, a?.city, a?.state, a?.pincode].filter(Boolean).join(', ')
 
   const calcItem = (it) => {
@@ -816,6 +917,7 @@ function EstimationPdfView({ userIdentifier, applicationId }) {
   const displayBranchAddress = formatBranchAddress(branchInfo?.full_address_txt || branchInfo?.branch_address || branchInfo?.address || '')
   const branchPhone = branchInfo?.phone_number || branchInfo?.phone || branchInfo?.contact_number || branchInfo?.contact || ''
 
+
   const numToWords = (n) => {
     if (!n || n === 0) return 'Zero'
     const a = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen']
@@ -841,7 +943,14 @@ function EstimationPdfView({ userIdentifier, applicationId }) {
     w.document.close(); setTimeout(() => { w.print(); w.close() }, 400)
   }
 
-  if (items.length === 0) return <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-6 text-center"><p className="text-amber-700 font-medium">No estimation data found.</p></div>
+  if (!loading && !hasDetailedData && items.length === 0) {
+    return (
+      <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-6 text-center">
+        <p className="text-amber-700 font-semibold text-lg">No estimation data found.</p>
+        <p className="text-sm text-gray-600 mt-2">The preview request completed without any matching estimation details.</p>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-4">
@@ -956,50 +1065,112 @@ function EstimationPdfView({ userIdentifier, applicationId }) {
 /* ================================================================ */
 /*  PAYMENT VOUCHER PDF VIEW                                         */
 /* ================================================================ */
-function PaymentPdfView({ userIdentifier, applicationId }) {
-  const [data, setData] = React.useState(null)
-  const [loading, setLoading] = React.useState(true)
-  const [branchInfo, setBranchInfo] = React.useState(null)
+function PaymentPdfView({ userIdentifier, applicationId, initialData }) {
+  const [liveData, setLiveData] = useState(null)
+  const [liveLoading, setLiveLoading] = useState(false)
+  const [isPreviewFetching, setIsPreviewFetching] = useState(false)
 
-  React.useEffect(() => {
-    (async () => {
-      try {
-        const r = await accountsAPI.searchCustomerSummary(userIdentifier, "customer,addresses,documents,applications,invoices,pledge_details")
-        const d = r.data || {}
-        setData(d)
+  useEffect(() => {
+    const hasDetailedInvoice = !!(
+      initialData?.invoice?.items?.length ||
+      initialData?.invoice?.invoice_items?.length ||
+      initialData?.invoice?.settlements?.length ||
+      initialData?.invoice?.payment_settlements?.length ||
+      initialData?.invoice_items?.length ||
+      initialData?.invoices?.some(inv => inv.items?.length || inv.invoice_items?.length || inv.settlements?.length || inv.payment_settlements?.length)
+    )
 
-        // Find the app to get place — prioritize applicationId
-        const apps = d.applications || []
-        const invoices = d.invoices || []
-        const inv = applicationId ? invoices.find(i => i.application_id === applicationId) : invoices[invoices.length - 1]
-        // Always find app by applicationId first
-        const app = apps.find(a => a.application_id === applicationId) || apps.find(a => a.application_id === inv?.application_id) || apps[0] || {}
+    let active = true
+    setIsPreviewFetching(true)
+    setLiveLoading(true)
 
-        try {
-          const br = await applicationsAPI.getBranches()
-          const branches = br.data?.branches || []
-          const place = (app.place || '').toLowerCase().trim()
-          if (place) {
-            let matched = branches.find(b => b.branch_name.toLowerCase() === place)
-            if (!matched) matched = branches.find(b => b.branch_name.toLowerCase().includes(place) || place.includes(b.branch_name.toLowerCase()))
-            if (matched) setBranchInfo(matched)
+    if (!applicationId) {
+      setIsPreviewFetching(false)
+      setLiveLoading(false)
+      return () => { active = false }
+    }
+
+    if (hasDetailedInvoice) {
+      setLiveData(initialData || null)
+      const keepLoaderVisible = window.setTimeout(() => {
+        if (active) {
+          setIsPreviewFetching(false)
+          setLiveLoading(false)
+        }
+      }, 600)
+      return () => {
+        active = false
+        window.clearTimeout(keepLoaderVisible)
+      }
+    }
+
+    applicationsAPI.getPaymentPreview(userIdentifier, applicationId)
+      .then(async (res) => {
+        if (!active) return
+        const payload = res?.data || null
+        const docs = Array.isArray(payload?.documents) ? payload.documents : []
+        const photoDoc = docs.find(d => /photo/i.test(d.document_type || ''))
+
+        let resolvedData = payload
+        if (photoDoc?.document_id) {
+          try {
+            const previewRes = await accountsAPI.previewDocument(userIdentifier, photoDoc.document_id)
+            const previewDataUrl = previewRes?.data?.preview_data || previewRes?.data || photoDoc.file_path || ''
+            resolvedData = {
+              ...payload,
+              documents: docs.map(doc => doc.document_id === photoDoc.document_id ? { ...doc, file_path: previewDataUrl } : doc),
+              account: { ...(payload?.account || payload?.customer || {}), photo_url: previewDataUrl }
+            }
+          } catch {
+            resolvedData = payload
           }
-        } catch {}
-      } catch {} finally { setLoading(false) }
-    })()
-  }, [userIdentifier, applicationId])
+        }
 
-  if (loading) return <div className="text-center py-20"><Loader size={36} className="animate-spin mx-auto text-amber-600" /><p className="text-gray-600 mt-4">Loading Payment Voucher...</p></div>
+        setLiveData(resolvedData)
+      })
+      .catch(() => {
+        if (active) setLiveData(null)
+      })
+      .finally(() => {
+        if (active) {
+          setLiveLoading(false)
+          setIsPreviewFetching(false)
+        }
+      })
 
-  const acc = data?.customer || {}
+    return () => { active = false }
+  }, [applicationId, userIdentifier, initialData])
+
+  const data = liveData || initialData || null
+  const loading = isPreviewFetching || (liveLoading && !data)
+  const branchInfo = null
+  const photoDataUrl = data?.documents?.find(d => /photo/i.test(d.document_type || ''))?.file_path || data?.account?.photo_url || data?.customer?.photo_url || ''
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-80 rounded-2xl border-2 border-dashed border-amber-200 bg-gradient-to-br from-amber-50 to-white shadow-inner">
+        <div className="w-14 h-14 rounded-full border-[5px] border-amber-200 border-t-amber-700 animate-spin shadow-sm" />
+        <p className="mt-4 text-lg font-bold text-amber-800">Loading payment voucher preview...</p>
+        <p className="mt-1 text-sm text-gray-600">The voucher is still being prepared. Please wait.</p>
+      </div>
+    )
+  }
+
+  if (!data && !loading) {
+    return <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-6 text-center"><p className="text-amber-700 font-medium">No payment data found for this application.</p></div>
+  }
+
+  const acc = data?.account || data?.customer || {}
   const addrs = data?.addresses || []
   const apps = data?.applications || []
-  const invoices = data?.invoices || []
-  const inv = applicationId ? invoices.find(i => i.application_id === applicationId) || invoices[invoices.length - 1] || {} : invoices[invoices.length - 1] || {}
-  const app = apps.find(a => a.application_id === (inv.application_id || applicationId)) || apps[0] || {}
-  const invItems = inv.items || []
-  const settlements = inv.settlements || []
-  const settlement = settlements.length > 0 ? settlements[settlements.length - 1] : {}
+  const invoiceList = data?.invoices || (data?.invoice ? [data.invoice] : [])
+  const inv = (applicationId
+    ? invoiceList.find(i => i.application_id === applicationId) || invoiceList[invoiceList.length - 1] || data?.invoice || {}
+    : (invoiceList[invoiceList.length - 1] || data?.invoice || {}))
+  const app = data?.application || apps.find(a => a.application_id === (inv.application_id || applicationId)) || apps[0] || {}
+  const invItems = inv.items || inv.invoice_items || data?.invoice_items || []
+  const settlements = inv.settlements || inv.payment_settlements || data?.settlements || []
+  const settlement = settlements.length > 0 ? settlements[settlements.length - 1] : (inv.settlement || {})
 
   const name = [acc.first_name, acc.last_name].filter(Boolean).join(' ')
   const present = addrs.find(a => /present|current/i.test(a.address_type)) || addrs[0] || {}
@@ -1073,15 +1244,15 @@ function PaymentPdfView({ userIdentifier, applicationId }) {
 
           {/* Bill No / Application No */}
           <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '14px' }}><tbody>
-            <tr><td style={lb} width="130">Bill No.</td><td style={vl}>{inv.invoice_no || '—'}</td><td style={lb} width="130">Date</td><td style={vl}>{formatDate(inv.invoice_date)}</td></tr>
-            <tr><td style={lb}>Application No.</td><td style={vl}>{app.application_no || ''}</td><td style={lb}>Application Date</td><td style={vl}>{formatDate(app.application_date) || ''}</td></tr>
+            <tr><td style={lb} width="130">Bill No.</td><td style={vl}>{inv.invoice_no || '—'}</td><td style={lb} width="130">Date</td><td style={vl}>{formatDate(inv.invoice_date || inv.created_at)}</td></tr>
+            <tr><td style={lb}>Application No.</td><td style={vl}>{app.application_no || data?.application?.application_no || ''}</td><td style={lb}>Application Date</td><td style={vl}>{formatDate(app.application_date || data?.application?.application_date) || ''}</td></tr>
           </tbody></table>
 
           {/* Customer Details */}
           {(() => {
             const docs = data?.documents || []
             const photoDoc = docs.find(d => /photo/i.test(d.document_type))
-            const photoUrl = acc.photo_url || photoDoc?.file_path || ''
+            const photoUrl = photoDataUrl || acc.photo_url || photoDoc?.file_path || ''
             const ageVal = acc.date_of_birth ? age(acc.date_of_birth) : ''
             return (
           <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '14px' }}><tbody>

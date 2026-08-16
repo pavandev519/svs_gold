@@ -43,8 +43,8 @@ export default function Documents({ isOpen, onToggle, data, onDataChange }) {
     const file = e.target.files?.[0]
     if (!file) return
 
-    if (file.size > 5 * 1024 * 1024) {
-      setErrors(prev => ({ ...prev, [`doc_${index}`]: 'File size must be less than 5MB' }))
+    if (file.size > 2 * 1024 * 1024) {
+      setErrors(prev => ({ ...prev, [`doc_${index}`]: 'File size must be less than 2MB' }))
       return
     }
 
@@ -165,7 +165,7 @@ export default function Documents({ isOpen, onToggle, data, onDataChange }) {
                   >
                     <Upload size={20} className="text-amber-500" />
                     <span className="text-xs font-semibold text-amber-700">Click to upload</span>
-                    <span className="text-[10px] text-gray-400">Max 5MB • PDF, JPG, PNG</span>
+                    <span className="text-[10px] text-gray-400">Max 2MB • PDF, JPG, PNG</span>
                   </label>
                 )}
 
@@ -182,6 +182,9 @@ export default function Documents({ isOpen, onToggle, data, onDataChange }) {
                     <AlertCircle size={12} /> {errors[`doc_${index}`]}
                   </p>
                 )}
+                <div className="mt-2 text-[10px] font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                  Upload limit: 2MB per document
+                </div>
               </div>
             )
           })}

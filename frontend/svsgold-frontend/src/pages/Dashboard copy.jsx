@@ -842,10 +842,25 @@ function ProfileSection({ customerMobile, loginData }) {
                   <span className="text-xs text-gray-400 flex-shrink-0">{doc.file_size_mb ? `${doc.file_size_mb}MB` : ''}</span>
                 </div>
                 <div className="flex gap-2 mt-3">
-                  <a
-                    href={doc.file_path}
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        if (doc?.document_id) {
+                          const res = await accountsAPI.previewDocument(customerMobile, doc.document_id)
+                          const data = res?.data
+                          const url = data?.preview_data || data || ''
+                          const w = window.open('')
+                          w.document.write(`<html><head><title>Preview</title></head><body style="margin:0;padding:12px;display:flex;align-items:center;justify-content:center"><img src="${url}" style="max-width:100%;height:auto;display:block" /></body></html>`)
+                          w.document.close()
+                        } else if (doc?.file_path) {
+                          window.open(doc.file_path, '_blank')
+                        }
+                      } catch (err) {
+                        console.error('Preview failed', err)
+                        if (doc?.file_path) window.open(doc.file_path, '_blank')
+                      }
+                    }}
                     className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${
                       doc.file_path
                         ? 'bg-white text-amber-700 border-amber-200 hover:bg-amber-50'
@@ -854,10 +869,42 @@ function ProfileSection({ customerMobile, loginData }) {
                   >
                     <Eye size={13} />
                     Preview
-                  </a>
-                  <a
-                    href={doc.file_path}
-                    download={doc.file_name || `${doc.document_type || 'document'}`}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        if (doc?.document_id) {
+                          const res = await accountsAPI.downloadDocument(customerMobile, doc.document_id)
+                          const blob = res.data
+                          const url = URL.createObjectURL(blob)
+                          const a = document.createElement('a')
+                          a.href = url
+                          a.download = doc.file_name || `${doc.document_type || 'document'}`
+                          document.body.appendChild(a)
+                          a.click()
+                          a.remove()
+                          URL.revokeObjectURL(url)
+                        } else if (doc?.file_path) {
+                          const a = document.createElement('a')
+                          a.href = doc.file_path
+                          a.download = doc.file_name || `${doc.document_type || 'document'}`
+                          document.body.appendChild(a)
+                          a.click()
+                          a.remove()
+                        }
+                      } catch (err) {
+                        console.error('Download failed', err)
+                        if (doc?.file_path) {
+                          const a = document.createElement('a')
+                          a.href = doc.file_path
+                          a.download = doc.file_name || `${doc.document_type || 'document'}`
+                          document.body.appendChild(a)
+                          a.click()
+                          a.remove()
+                        }
+                      }
+                    }}
                     className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${
                       doc.file_path
                         ? 'bg-white text-green-700 border-green-200 hover:bg-green-50'
@@ -866,7 +913,7 @@ function ProfileSection({ customerMobile, loginData }) {
                   >
                     <Download size={13} />
                     Download
-                  </a>
+                  </button>
                 </div>
               </div>
             ))}

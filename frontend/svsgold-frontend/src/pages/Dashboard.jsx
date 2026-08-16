@@ -58,6 +58,59 @@ export default function Dashboard({ loginData, onLogout }) {
     const [showCreateAccount, setShowCreateAccount] = useState(false)
     const [customerMode, setCustomerMode] = useState('existing')
 
+    // Document preview / download helpers
+    const handlePreviewDocument = async (doc) => {
+        try {
+            if (doc?.document_id) {
+                const res = await accountsAPI.previewDocument(customerMobile, doc.document_id)
+                const data = res?.data
+                const url = data?.preview_data || data || ''
+                const w = window.open('')
+                w.document.write(`<html><head><title>Preview</title></head><body style="margin:0;padding:12px;display:flex;align-items:center;justify-content:center"><img src="${url}" style="max-width:100%;height:auto;display:block" /></body></html>`)
+                w.document.close()
+            } else if (doc?.file_path) {
+                window.open(doc.file_path, '_blank')
+            }
+        } catch (err) {
+            console.error('Preview failed', err)
+            if (doc?.file_path) window.open(doc.file_path, '_blank')
+        }
+    }
+
+    const handleDownloadDocument = async (doc) => {
+        try {
+            if (doc?.document_id) {
+                const res = await accountsAPI.downloadDocument(customerMobile, doc.document_id)
+                const blob = res.data
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = doc.file_name || `${doc.document_type || 'document'}`
+                document.body.appendChild(a)
+                a.click()
+                a.remove()
+                URL.revokeObjectURL(url)
+            } else if (doc?.file_path) {
+                const a = document.createElement('a')
+                a.href = doc.file_path
+                a.download = doc.file_name || `${doc.document_type || 'document'}`
+                document.body.appendChild(a)
+                a.click()
+                a.remove()
+            }
+        } catch (err) {
+            console.error('Download failed', err)
+            if (doc?.file_path) {
+                const a = document.createElement('a')
+                a.href = doc.file_path
+                a.download = doc.file_name || `${doc.document_type || 'document'}`
+                document.body.appendChild(a)
+                a.click()
+                a.remove()
+            }
+        }
+    }
+
     /* ---- Applications State ---- */
     const [applications, setApplications] = useState([])
     const [showCreateForm, setShowCreateForm] = useState(false)
@@ -930,7 +983,7 @@ function ProfileSection({ customerMobile, loginData, onAddCustomer, onSelectExis
     }
     const handleDocUpload = (index, file) => {
         if (!file) return
-        if (file.size > 5 * 1024 * 1024) { setError('File size must be less than 5MB'); return }
+        if (file.size > 2 * 1024 * 1024) { setError('File size must be less than 2MB'); return }
         const reader = new FileReader()
         reader.onload = (e) => {
             setEditDocs(prev => {
@@ -938,15 +991,17 @@ function ProfileSection({ customerMobile, loginData, onAddCustomer, onSelectExis
                 u[index] = { ...u[index], file_path: e.target.result, file_name: file.name, file_size_mb: (file.size / (1024 * 1024)).toFixed(2), _newFile: true }
                 return u
             })
+            setError('')
         }
         reader.readAsDataURL(file)
     }
     const handleDocRemove = (index) => {
         setEditDocs(prev => {
             const u = [...prev]
-            u[index] = { ...u[index], file_path: '', file_name: '', file_size_mb: 0, _newFile: false }
+            u[index] = { ...u[index], document_type: '', document_number: '', file_path: '', file_name: '', file_size_mb: 0, _newFile: false }
             return u
         })
+        setError('')
     }
     const handleDocDelete = (index) => {
         setEditDocs(prev => {
@@ -1020,19 +1075,32 @@ function ProfileSection({ customerMobile, loginData, onAddCustomer, onSelectExis
                 }
             }
 
-            // 5. Validate documents before saving
-            const docsToSave = editDocs.filter(doc => {
-                // Only save documents that have both document_type AND file_path
-                return doc.document_type && doc.file_path && doc.file_name
+            // 5. Validate only rows that are actively being changed or newly uploaded.
+            // Existing saved documents without a fresh file upload should not block saving.
+            const activeDocs = editDocs.filter(doc =>
+                doc.document_type || doc.document_number || doc.file_path || doc.file_name || doc.document_id
+            )
+
+            const incompleteDocs = activeDocs.filter(doc => {
+                const isExistingSavedDoc = !!doc.document_id && !doc._newFile
+                if (isExistingSavedDoc) return false
+                if (!doc.document_type) return true
+                if (doc.file_name && !doc.file_path) return true
+                if (doc.file_path && !doc.file_name) return true
+                return false
             })
 
-            if (docsToSave.length < editDocs.length) {
-                // Some documents are incomplete (missing file or type)
-                const incompleteCount = editDocs.length - docsToSave.length
-                setError(`${incompleteCount} document(s) incomplete - please remove or upload files for all documents`)
+            if (incompleteDocs.length > 0) {
+                setError('Please complete the selected document before saving, or remove it if not needed.')
                 setSaving(false)
                 return
             }
+
+            const docsToSave = activeDocs.filter(doc => {
+                const isExistingSavedDoc = !!doc.document_id && !doc._newFile
+                if (isExistingSavedDoc) return false
+                return !!doc.document_type && !!doc.file_path && !!doc.file_name
+            })
 
             // 5. Re-save all remaining documents (both new and updated)
             for (const doc of docsToSave) {
@@ -1381,7 +1449,12 @@ function ProfileSection({ customerMobile, loginData, onAddCustomer, onSelectExis
                                                             <div className="text-xs text-gray-400">{doc.file_size_mb}MB</div>
                                                         </div>
                                                     ) : (
-                                                        <p className="text-xs text-gray-500">Accepted: PDF, JPG, PNG, DOC, DOCX. Max 5MB.</p>
+                                                        <p className="text-xs text-gray-500">Accepted: PDF, JPG, PNG, DOC, DOCX. Max 2MB.</p>
+                                                    )}
+                                                    {((doc._newFile || (!doc.document_id && !!doc.document_type)) && (!doc.file_path || !doc.file_name)) && (
+                                                        <p className="text-xs text-red-600 font-medium flex items-center gap-1">
+                                                            <span className="inline-block w-2 h-2 rounded-full bg-red-500" /> Upload required for this document
+                                                        </p>
                                                     )}
                                                 </div>
                                             </div>
@@ -1394,21 +1467,68 @@ function ProfileSection({ customerMobile, loginData, onAddCustomer, onSelectExis
                                                 <span className="text-xs text-gray-400 flex-shrink-0">{doc.file_size_mb ? `${doc.file_size_mb}MB` : ''}</span>
                                             </div>
                                             <div className="flex gap-2 mt-3">
-                                                <a
-                                                    href={doc.file_path}
-                                                    target="_blank"
-                                                    rel="noreferrer"
+                                                <button
+                                                    type="button"
+                                                    onClick={async () => {
+                                                        try {
+                                                            if (doc?.document_id) {
+                                                                const res = await accountsAPI.previewDocument(customerMobile, doc.document_id)
+                                                                const data = res?.data
+                                                                const url = data?.preview_data || data || ''
+                                                                const w = window.open('')
+                                                                w.document.write(`<html><head><title>Preview</title></head><body style="margin:0;padding:12px;display:flex;align-items:center;justify-content:center"><img src="${url}" style="max-width:100%;height:auto;display:block" /></body></html>`)
+                                                                w.document.close()
+                                                            } else if (doc?.file_path) {
+                                                                window.open(doc.file_path, '_blank')
+                                                            }
+                                                        } catch (err) {
+                                                            console.error('Preview failed', err)
+                                                            if (doc?.file_path) window.open(doc.file_path, '_blank')
+                                                        }
+                                                    }}
                                                     className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white text-amber-700 border border-amber-200 hover:bg-amber-50 transition-colors"
                                                 >
                                                     <Eye size={13} /> Preview
-                                                </a>
-                                                <a
-                                                    href={doc.file_path}
-                                                    download={doc.file_name || `${doc.document_type || 'document'}`}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={async () => {
+                                                        try {
+                                                            if (doc?.document_id) {
+                                                                const res = await accountsAPI.downloadDocument(customerMobile, doc.document_id)
+                                                                const blob = res.data
+                                                                const url = URL.createObjectURL(blob)
+                                                                const a = document.createElement('a')
+                                                                a.href = url
+                                                                a.download = doc.file_name || `${doc.document_type || 'document'}`
+                                                                document.body.appendChild(a)
+                                                                a.click()
+                                                                a.remove()
+                                                                URL.revokeObjectURL(url)
+                                                            } else if (doc?.file_path) {
+                                                                const a = document.createElement('a')
+                                                                a.href = doc.file_path
+                                                                a.download = doc.file_name || `${doc.document_type || 'document'}`
+                                                                document.body.appendChild(a)
+                                                                a.click()
+                                                                a.remove()
+                                                            }
+                                                        } catch (err) {
+                                                            console.error('Download failed', err)
+                                                            if (doc?.file_path) {
+                                                                const a = document.createElement('a')
+                                                                a.href = doc.file_path
+                                                                a.download = doc.file_name || `${doc.document_type || 'document'}`
+                                                                document.body.appendChild(a)
+                                                                a.click()
+                                                                a.remove()
+                                                            }
+                                                        }
+                                                    }}
                                                     className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white text-green-700 border border-green-200 hover:bg-green-50 transition-colors"
                                                 >
                                                     <Download size={13} /> Download
-                                                </a>
+                                                </button>
                                             </div>
                                         </>
                                     )}

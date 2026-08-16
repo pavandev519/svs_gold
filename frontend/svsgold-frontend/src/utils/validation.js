@@ -57,7 +57,7 @@ export const formatDate = (dateInput) => {
 export const validateDocumentFile = (file) => {
   if (!file) return { valid: false, error: 'File is required' }
   
-  const maxSizeMB = 5
+  const maxSizeMB = 2
   const fileSizeMB = file.size / (1024 * 1024)
   
   if (fileSizeMB > maxSizeMB) {

@@ -256,7 +256,7 @@ export default function PaymentPage() {
       if (wtAfter <= 0) { setError(`Item ${i+1}: weight after melting must be greater than 0`); return }
       if (wtAfter > wtBefore) { setError(`Item ${i+1}: weight after melting cannot be greater than weight before melting`); return }
       if (String(invoiceItems[i].purity_after_melting).includes('.')) { setError(`Item ${i+1}: purity must be a whole number (no decimals)`); return }
-      if (!dedPct || dedPct <= 0.5) { setError(`Item ${i+1}: deduction % must be greater than 0.5%`); return }
+      if (dedPct < 0.5) { setError(`Item ${i+1}: deduction % must be at least 0.5%`); return }
     }
     try {
       setLoading(true); setError('')
@@ -307,6 +307,7 @@ export default function PaymentPage() {
   }
 
   const handlePreview = () => navigate('/payment-preview', { state: { application: appData, invoice, invoiceItems, deductions: [], settlement, mobile: loggedInMobile } })
+  const paymentModeLabel = String(settlement?.payment_mode || invoice?.payment_mode || 'BANK_TRANSFER').replace(/_/g, ' ')
   const handleLogout = () => { localStorage.removeItem('svs_gold_login_data'); localStorage.removeItem('user_mobile'); navigate('/login') }
 
   if (!appData) return (
@@ -434,19 +435,19 @@ export default function PaymentPage() {
                         <div>
                           <label className={labelClass}>
                             Deductions (%)
-                            {parseFloat(item.deduction_percentage) > 0 && parseFloat(item.deduction_percentage) <= 0.5 && (
-                              <span className="text-red-500 text-xs ml-2 font-semibold">&gt; 0.5%</span>
+                            {parseFloat(item.deduction_percentage) > 0 && parseFloat(item.deduction_percentage) < 0.5 && (
+                              <span className="text-red-500 text-xs ml-2 font-semibold">&gt;= 0.5%</span>
                             )}
                           </label>
                           <input 
                             type="text" 
                             value={item.deduction_percentage} 
                             onChange={e => updateInvoiceItem(idx, 'deduction_percentage', e.target.value.replace(/[^0-9.]/g,''))} 
-                            className={`${inputClass} ${parseFloat(item.deduction_percentage) > 0 && parseFloat(item.deduction_percentage) <= 0.5 ? 'border-red-500 border-2' : ''}`}
-                            placeholder="> 0.5%"
+                            className={`${inputClass} ${parseFloat(item.deduction_percentage) > 0 && parseFloat(item.deduction_percentage) < 0.5 ? 'border-red-500 border-2' : ''}`}
+                            placeholder=">= 0.5%"
                           />
-                          {parseFloat(item.deduction_percentage) > 0 && parseFloat(item.deduction_percentage) <= 0.5 && (
-                            <p className="mt-1 text-xs text-red-600">Processing/Deduction must be greater than 0.5%</p>
+                          {parseFloat(item.deduction_percentage) > 0 && parseFloat(item.deduction_percentage) < 0.5 && (
+                            <p className="mt-1 text-xs text-red-600">Processing/Deduction must be at least 0.5%</p>
                           )}
                         </div>
                       </div>
@@ -597,7 +598,7 @@ export default function PaymentPage() {
                 {/* Success */}
                 <div className="bg-green-50 border-2 border-green-200 rounded-2xl p-6 flex items-start gap-4">
                   <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0"><Check size={22} className="text-white" /></div>
-                  <div><h3 className="text-lg font-bold text-green-800">Payment Completed!</h3><p className="text-sm text-green-600 mt-1">Invoice {invoice.invoice_no} • ₹{settlement.paid_amount.toLocaleString('en-IN')} via {settlement.payment_mode.replace(/_/g,' ')}</p></div>
+                  <div><h3 className="text-lg font-bold text-green-800">Payment Completed!</h3><p className="text-sm text-green-600 mt-1">Invoice {invoice.invoice_no} • ₹{Number(settlement?.paid_amount ?? 0).toLocaleString('en-IN')} via {paymentModeLabel}</p></div>
                 </div>
 
                 {/* ======== PAYMENT VOUCHER PDF REPLICA ======== */}
@@ -734,7 +735,7 @@ export default function PaymentPage() {
                         </tr>
                         <tr>
                           <td style={lb}>Note: Payment Reference No.</td>
-                          <td style={vl}>{settlement.payment_mode.replace(/_/g,' ')} — {settlement.payment_date}</td>
+                          <td style={vl}>{paymentModeLabel} — {settlement?.payment_date || invoice?.invoice_date || ''}</td>
                         </tr>
                       </tbody>
                     </table>

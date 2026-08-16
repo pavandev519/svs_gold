@@ -195,12 +195,15 @@ export default function EstimationPage() {
       }
 
       setSaved(true); setGeneratingPdf(true); setPreviewLoading(true); setPreviewData(null)
+      console.time('[EstimationPreview] full save+preview pipeline')
 
       // Get lightweight preview context for the estimation copy.
       let preview = {}
       try {
         const appId = application?.application?.application_id
+        console.time('[EstimationPreview] getEstimationPreview')
         const res = await applicationsAPI.getEstimationPreview(loggedInMobile, appId)
+        console.timeEnd('[EstimationPreview] getEstimationPreview')
         const d = res.data || {}
 
         preview = {
@@ -208,15 +211,66 @@ export default function EstimationPage() {
           addresses: d.addresses || [],
           documents: d.documents || [],
           pledge_details: d.pledge_details || null,
-          application: d.application || application?.application || {}
+          application: d.application || application?.application || {},
+          ornaments: d.ornaments || []
         }
       } catch {
         setError('Estimation saved, but preview details are still loading. Please wait or retry.')
       }
       setPreviewData(preview)
 
+      // Only load the customer photo / one required document preview. Loading every document and every ornament image
+      // adds large blob decoding work and can take tens of seconds on local dev servers.
+      try {
+        const allDocs = preview?.documents || []
+        const docsToPreview = allDocs.filter(doc => /photo/i.test(doc.document_type || '')).slice(0, 1)
+        if (docsToPreview.length > 0) {
+          console.time('[EstimationPreview] photo document preview fetch')
+          const previewPromises = docsToPreview.map(async (doc) => {
+            if (doc?.document_id) {
+              try {
+                const r = await accountsAPI.previewDocument(loggedInMobile, doc.document_id)
+                return { ...doc, file_path: r?.data?.preview_data || r?.data || doc.file_path }
+              } catch (e) {
+                return { ...doc, file_path: doc.file_path || '' }
+              }
+            }
+            return doc
+          })
+          const docsWithPreviews = await Promise.all(previewPromises)
+          console.timeEnd('[EstimationPreview] photo document preview fetch')
+          preview.documents = docsWithPreviews
+          setPreviewData(preview)
+        }
+      } catch (e) { console.error('Failed to fetch document previews for estimation:', e) }
+
+      // Only fetch ornament previews when the ornament actually references a concrete doc id.
+      try {
+        const ornaments = preview?.ornaments || preview?.application?.ornaments || []
+        if (Array.isArray(ornaments) && ornaments.length > 0) {
+          const ornamentPromises = ornaments.map(async (o) => {
+            const photoRef = o?.item_photo_url
+            const did = photoRef && !String(photoRef).startsWith('data:') ? Number(photoRef) : null
+            if (did && !Number.isNaN(did)) {
+              try {
+                const r = await accountsAPI.previewDocument(loggedInMobile, did)
+                return { ...o, item_photo_url: r?.data?.preview_data || r?.data || o.item_photo_url }
+              } catch (err) {
+                return o
+              }
+            }
+            return o
+          })
+          const ornamentsWithPreviews = await Promise.all(ornamentPromises)
+          preview.ornaments = ornamentsWithPreviews
+          if (preview.application) preview.application.ornaments = ornamentsWithPreviews
+          setPreviewData(preview)
+        }
+      } catch (e) { console.error('Failed to fetch ornament previews for estimation:', e) }
+
       const custName = preview?.account?.name || [preview?.account?.first_name, preview?.account?.last_name].filter(Boolean).join(' ') || preview?.pledge_details?.pledger_name || ''
 
+      console.time('[EstimationPreview] generateEstimationPdf')
       const gen = new PdfGenerator()
       const pdfBytes = await gen.generateEstimationPdf({
         estimation_no: estNo,
@@ -225,10 +279,14 @@ export default function EstimationPage() {
         application_no: preview?.application?.application_no || '',
         items: items.map(it => { const c = calcItem(it); return { item_name: it.item_name, gross_weight: it.gross_weight_gms, net_weight: c.netWeight, pure_gold_weight: c.pureGoldWeight, gold_rate: it.gold_rate_per_gm, net_amount: c.netAmount.toFixed(2) } })
       })
-      setPdfUrl(URL.createObjectURL(new Blob([pdfBytes], { type: 'application/pdf' })))
+      const pdfUrlResult = URL.createObjectURL(new Blob([pdfBytes], { type: 'application/pdf' }))
+      console.timeEnd('[EstimationPreview] generateEstimationPdf')
+      console.timeEnd('[EstimationPreview] full save+preview pipeline')
+      setPdfUrl(pdfUrlResult)
     } catch (err) {
       const errorMsg = err.response?.data?.msg || err.response?.data?.message || err.message || 'Failed to save estimation.'
       setError(errorMsg)
+      console.timeEnd('[EstimationPreview] full save+preview pipeline')
     } finally { setLoading(false); setGeneratingPdf(false); setPreviewLoading(false) }
   }
 

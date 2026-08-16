@@ -85,9 +85,7 @@ export default function App() {
         path="/estimation"
         element={
           loginData
-            ? loginData.username?.toLowerCase() === 'vinay'
-              ? <EstimationPage />
-              : <Navigate to="/dashboard" replace />
+            ? <EstimationPage />
             : <Navigate to="/login" replace />
         }
       />
@@ -97,9 +95,7 @@ export default function App() {
         path="/payment"
         element={
           loginData
-            ? loginData.username?.toLowerCase() === 'vinay'
-              ? <PaymentPage />
-              : <Navigate to="/dashboard" replace />
+            ? <PaymentPage />
             : <Navigate to="/login" replace />
         }
       />

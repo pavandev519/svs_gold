@@ -9,13 +9,38 @@ const api = axios.create({
 })
 
 api.interceptors.request.use(
-  config => { console.log(`[API] ${config.method.toUpperCase()} ${config.baseURL}${config.url}`); return config },
+  config => {
+    try { config.metadata = { startTime: new Date() } } catch (e) {}
+    console.log(`[API] ${config.method.toUpperCase()} ${config.baseURL}${config.url}`)
+    return config
+  },
   error => Promise.reject(error)
 )
 
 api.interceptors.response.use(
-  response => { console.log('[API] Response Success'); return response },
-  error => { console.error(`[API Error] ${error.message}`); return Promise.reject(error) }
+  response => {
+    try {
+      const start = response.config?.metadata?.startTime
+      if (start) {
+        const duration = new Date() - new Date(start)
+        console.log(`[API] ${response.config.method.toUpperCase()} ${response.config.url} - ${duration}ms`)
+      }
+    } catch (e) {}
+    console.log('[API] Response Success')
+    return response
+  },
+  error => {
+    try {
+      const cfg = error.config || {}
+      const start = cfg?.metadata?.startTime
+      if (start) {
+        const duration = new Date() - new Date(start)
+        console.error(`[API Error] ${cfg.method || 'unknown'} ${cfg.url || ''} - ${duration}ms - ${error.message}`)
+      }
+    } catch (e) {}
+    console.error(`[API Error] ${error.message}`)
+    return Promise.reject(error)
+  }
 )
 
 const searchCustomerCache = new Map()
@@ -61,6 +86,8 @@ export const accountsAPI = {
   addBankAccount: (mobile, data) => api.post(`/accounts/bank-accounts?mobile=${mobile}`, data),
   addDocument: (mobile, data) => api.post(`/accounts/documents?mobile=${mobile}`, data),
   deleteDocument: (mobile, documentId) => api.delete(`/accounts/documents?mobile=${mobile}&document_id=${documentId}`),
+  previewDocument: (mobile, documentId) => api.get(`/accounts/documents/${documentId}/preview?mobile=${encodeURIComponent(mobile)}`),
+  downloadDocument: (mobile, documentId) => api.get(`/accounts/documents/${documentId}/download?mobile=${encodeURIComponent(mobile)}`, { responseType: 'blob' }),
   searchCustomer: (mobile, { force = false } = {}) => {
     if (!mobile) return Promise.reject(new Error('Mobile is required'))
 
@@ -131,6 +158,7 @@ export const applicationsAPI = {
   getApplicationPreview: (mobile, applicationId) => api.get(`/applications/application-preview?mobile=${mobile}&application_id=${applicationId}`),
   getOrnamentsByApplication: (mobile, applicationId) => api.get(`/applications/ornaments/by-application?mobile=${mobile}&application_id=${applicationId}`),
   getEstimationPreview: (mobile, applicationId) => api.get(`/applications/estimation-preview?mobile=${mobile}&application_id=${applicationId}`),
+  getPaymentPreview: (mobile, applicationId) => api.get(`/applications/payment-preview?mobile=${mobile}&application_id=${applicationId}`),
   createApplication: (data) => api.post('/applications/create', data),
   updateApplication: (data) => api.put('/applications/update', data),
   deleteApplication: (data) => api.delete('/applications/delete', { data }),

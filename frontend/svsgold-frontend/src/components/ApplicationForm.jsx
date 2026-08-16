@@ -108,7 +108,7 @@ export default function ApplicationForm({
     } finally {
       setCustomerDataLoading(false)
     }
-  }, [userIdentifier, customerDataLoading, customerData])
+  }, [userIdentifier, customerDataLoading])
 
   /* ================================================================ */
   /*  DERIVED: Is this a Direct Buying application?                   */
@@ -123,7 +123,7 @@ export default function ApplicationForm({
   /*  EDIT MODE: Fetch existing data, determine resume step           */
   /* ================================================================ */
   useEffect(() => {
-    if (!existingApplication) return
+    if (!existingApplication?.application_id) return
 
     const fetchExistingData = async () => {
       try {
@@ -135,10 +135,10 @@ export default function ApplicationForm({
         let hasPledge = false
         let hasOrnaments = false
 
-        // Load the full summary required for editing an existing application
+        // Load the actual application-specific data instead of only customer summary rows.
         let d = null
         try {
-          const res = await accountsAPI.searchCustomerSummary(userIdentifier, "customer,addresses,applications,pledge_details,ornaments")
+          const res = await accountsAPI.searchCustomerSummary(userIdentifier, "customer,addresses,applications,pledge_details")
           d = res.data || {}
         } catch (e) {
           console.error('Failed loading existing application details:', e)
@@ -151,7 +151,6 @@ export default function ApplicationForm({
           const presentAddr = addresses.find(a => /present|current/i.test(a.address_type)) || addresses[0] || {}
           const fullAddress = [presentAddr.address_line, presentAddr.street, presentAddr.city, presentAddr.state, presentAddr.pincode].filter(Boolean).join(', ')
 
-          // Match pledge by application_id
           const allPledges = d.pledge_details || []
           const appPledge = allPledges.find(p => p.application_id === appId)
           if (appPledge?.pledger_name) {
@@ -165,17 +164,30 @@ export default function ApplicationForm({
               branch_name: prev.branch_name || existingApplication.place || ''
             }))
           }
-
-          // Match ornaments by application_id
-          const allOrnaments = d.ornaments || []
-          const appOrnaments = allOrnaments.filter(o => o.application_id === appId)
-          if (appOrnaments.length > 0) {
-            setOrnaments(appOrnaments.map((o, i) => ({ ...o, id: o.id || o.item_id || Date.now() + i })))
-            hasOrnaments = true; setOrnamentsSaved(true)
-          }
         }
 
-        // Always start editing from the first application step
+        try {
+          const ornamentsRes = await applicationsAPI.getOrnamentsByApplication(userIdentifier, appId)
+          const appOrnaments = ornamentsRes?.data?.ornaments || []
+          if (appOrnaments.length > 0) {
+            const normalized = appOrnaments.map((o, i) => ({
+              ...o,
+              id: o.item_id || o.id || Date.now() + i,
+              item_id: o.item_id || o.id || null,
+              quantity: Number(o.quantity) || 0,
+              purity_percentage: Number(o.purity_percentage) || 0,
+              approx_weight_gms: Number(o.approx_weight_gms) || 0,
+              item_photo_url: o.item_photo_url || ''
+            }))
+            setOrnaments(normalized)
+            hasOrnaments = true; setOrnamentsSaved(true)
+          }
+        } catch (e) {
+          console.error('Failed loading existing ornaments:', e)
+        }
+
+        // Always open edit mode on the first step. Saved application data is loaded
+        // in the background so the user can review/edit it from the start.
         setStep(1)
 
       } catch (err) {
@@ -186,14 +198,14 @@ export default function ApplicationForm({
     }
 
     fetchExistingData()
-  }, [existingApplication, userIdentifier, fetchCustomerData])
+  }, [existingApplication?.application_id, userIdentifier])
 
   /* ================================================================ */
   /*  FETCH CUSTOMER INFO — pre-fill pledger name, address & branch   */
   /*  Uses shared customer data fetcher                              */
   /* ================================================================ */
   useEffect(() => {
-    if (!userIdentifier) return
+    if (!userIdentifier || customerData) return
 
     const fetchCustomerInfo = async () => {
       const d = await fetchCustomerData()
@@ -219,7 +231,7 @@ export default function ApplicationForm({
     }
 
     fetchCustomerInfo()
-  }, [userIdentifier, fetchCustomerData])
+  }, [userIdentifier, customerData, fetchCustomerData])
 
   useEffect(() => {
     if (assignedBranch) {

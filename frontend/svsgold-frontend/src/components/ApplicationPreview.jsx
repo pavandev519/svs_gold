@@ -201,6 +201,32 @@ export default function ApplicationPreview({ application, userIdentifier, onBack
   // Find photo from documents or account
   const photoDoc = docs.find(d => /photo/i.test(d.document_type))
   const photoUrl = acc.photo_url || photoDoc?.file_path || ''
+  const [photoDataUrl, setPhotoDataUrl] = useState('')
+
+  useEffect(() => {
+    let active = true
+    const loadPhotoPreview = async () => {
+      try {
+        setPhotoDataUrl('')
+        const doc = (previewData?.documents || []).find(d => /photo/i.test(d.document_type))
+        if (doc?.document_id) {
+          const res = await accountsAPI.previewDocument(userIdentifier, doc.document_id)
+          if (!active) return
+          const payload = res?.data
+          const url = payload?.preview_data || payload || ''
+          setPhotoDataUrl(url)
+        } else {
+          setPhotoDataUrl(acc.photo_url || photoDoc?.file_path || '')
+        }
+      } catch (err) {
+        if (!active) return
+        console.error('Photo preview load error', err)
+        setPhotoDataUrl(acc.photo_url || photoDoc?.file_path || '')
+      }
+    }
+    loadPhotoPreview()
+    return () => { active = false }
+  }, [previewData, userIdentifier, acc.photo_url])
 
   let tQ = 0, tW = 0
   ornaments.forEach(o => { tQ += Number(o.quantity) || 0; tW += Number(o.approx_weight_gms) || 0 })
@@ -259,8 +285,8 @@ export default function ApplicationPreview({ application, userIdentifier, onBack
                   <td style={val} colSpan={5}>{app.application_no || ''}</td>
                   {/* Photo cell spanning multiple rows */}
                   <td style={{ border: cb, padding: '2px', textAlign: 'center', verticalAlign: 'top', width: '75px' }} rowSpan={8}>
-                    {photoUrl ? (
-                      <img src={photoUrl} alt="Customer" style={{ width: '70px', height: '80px', objectFit: 'cover', borderRadius: '2px' }} />
+                    {photoUrl || photoDataUrl ? (
+                      <img src={photoDataUrl || photoUrl} alt="Customer" style={{ width: '70px', height: '80px', objectFit: 'cover', borderRadius: '2px' }} />
                     ) : (
                       <div style={{ width: '70px', height: '80px', background: '#f0f6fb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '8px', color: '#999', border: '1px dashed #bbb', margin: '0 auto' }}>Photo</div>
                     )}

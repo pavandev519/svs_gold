@@ -11,17 +11,21 @@ export default function InvoicePreviewPage() {
   const navigate = useNavigate()
   const invoiceRef = useRef(null)
 
-  const {
-    application: appData,
-    invoice,
-    invoiceItems,
-    deductions,
-    settlement,
-    mobile
-  } = location.state || {}
+  const navigationState = location.state || {}
+  const appData = navigationState.application || null
+  const routeInvoice = navigationState.invoice || null
+  const routeInvoiceItems = navigationState.invoiceItems || []
+  const routeDeductions = navigationState.deductions || []
+  const routeSettlement = navigationState.settlement || null
+  const mobile = navigationState.mobile || localStorage.getItem('user_mobile') || ''
 
   const [previewData, setPreviewData] = useState(null)
   const [loading, setLoading] = useState(true)
+
+  const invoice = routeInvoice || appData?.invoice || null
+  const invoiceItems = routeInvoiceItems.length > 0 ? routeInvoiceItems : (invoice?.items || invoice?.invoice_items || [])
+  const deductions = routeDeductions.length > 0 ? routeDeductions : (invoice?.deductions || [])
+  const settlement = routeSettlement || invoice?.settlement || invoice?.latest_settlement || null
 
   /* ---- Fetch customer details from summary API ---- */
   useEffect(() => {
@@ -66,8 +70,9 @@ export default function InvoicePreviewPage() {
   const subTotal = invoiceItems?.reduce((s, i) => s + (i.gross_amount || 0), 0) || 0
   const totalDeductions = deductions?.reduce((s, d) => s + (d.deduction_amount || 0), 0) || 0
   const netTotal = invoiceItems?.reduce((s, i) => s + (i.net_amount || 0), 0) || 0
-  const paidAmount = settlement?.paid_amount || 0
+  const paidAmount = Number(settlement?.paid_amount ?? invoice?.paid_amount ?? 0)
   const dueAmount = Math.max(0, netTotal - paidAmount)
+  const paymentModeLabel = String(settlement?.payment_mode || invoice?.payment_mode || 'BANK_TRANSFER').replace(/_/g, ' ')
 
   /* ---- Customer info from preview ---- */
   const account = previewData?.account || {}
@@ -78,13 +83,13 @@ export default function InvoicePreviewPage() {
   const customerAddr = [addr.address_line, addr.city, addr.state, addr.pincode].filter(Boolean).join(', ')
 
   /* ---- Guard ---- */
-  if (!invoice) {
+  if (!invoice && !loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100 p-8">
         <div className="bg-white rounded-2xl shadow-lg p-10 text-center max-w-md">
           <AlertCircle size={48} className="text-amber-500 mx-auto mb-4" />
           <h2 className="text-xl font-bold mb-2">No Invoice Data</h2>
-          <p className="text-gray-500 mb-6">Complete the payment flow first.</p>
+          <p className="text-gray-500 mb-6">Complete the payment flow first or reload the preview with valid payment data.</p>
           <button onClick={() => navigate('/dashboard')} className="px-6 py-3 bg-amber-700 text-white font-bold rounded-xl">Dashboard</button>
         </div>
       </div>
@@ -291,7 +296,7 @@ export default function InvoicePreviewPage() {
                         <td style={{ padding: '8px 6px', color: '#374151' }}>{settlement?.payment_date}</td>
                         <td style={{ padding: '8px 6px' }}>
                           <span style={{ background: '#dcfce7', color: '#a36e24', padding: '2px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: '600' }}>
-                            {settlement?.payment_mode?.replace('_', ' ')}
+                            {paymentModeLabel}
                           </span>
                         </td>
                         <td style={{ padding: '8px 6px', fontWeight: '700', color: '#111' }}>₹{paidAmount.toLocaleString('en-IN')}</td>
@@ -391,7 +396,7 @@ export default function InvoicePreviewPage() {
                     <tr><td style={{ fontWeight: '600', paddingRight: '12px', color: '#374151' }}>Company</td><td>SVS Gold Private Limited</td></tr>
                     {settlement?.bank_name && <tr><td style={{ fontWeight: '600', paddingRight: '12px', color: '#374151' }}>Bank</td><td>{settlement.bank_name}</td></tr>}
                     {settlement?.reference_no && <tr><td style={{ fontWeight: '600', paddingRight: '12px', color: '#374151' }}>Ref No</td><td>{settlement.reference_no}</td></tr>}
-                    <tr><td style={{ fontWeight: '600', paddingRight: '12px', color: '#374151' }}>Mode</td><td>{settlement?.payment_mode?.replace('_', ' ')}</td></tr>
+                    <tr><td style={{ fontWeight: '600', paddingRight: '12px', color: '#374151' }}>Mode</td><td>{paymentModeLabel}</td></tr>
                   </tbody>
                 </table>
               </div>

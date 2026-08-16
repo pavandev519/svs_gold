@@ -5,6 +5,78 @@ import psycopg2.extras
 from datetime import date, timedelta
 from typing import Optional
 from db import get_connection
+import time
+import threading
+import base64
+import io
+from fastapi.responses import StreamingResponse
+import binascii
+
+
+def _normalize_blob(file_path):
+    """Return raw bytes for a stored `file_path` value.
+
+    Handles three common storage formats:
+    - actual Postgres bytea / Python bytes -> return as-is
+    - base64-encoded string -> decode and return bytes
+    - raw text (fallback) -> return utf-8 bytes
+    """
+    if file_path is None:
+        return None
+    # bytes stored directly
+    if isinstance(file_path, (bytes, bytearray)):
+        return bytes(file_path)
+
+    # strip data URL prefix if present
+    if isinstance(file_path, str):
+        s = file_path.strip()
+        if s.startswith('data:'):
+            # split at comma
+            parts = s.split(',', 1)
+            if len(parts) == 2:
+                s = parts[1]
+
+        # try strict base64 decode first
+        try:
+            decoded = base64.b64decode(s, validate=True)
+            return decoded
+        except (binascii.Error, ValueError):
+            # not valid base64; many rows were stored as raw binary in a TEXT column
+            # decode using latin-1 to map bytes 1:1 from characters
+            try:
+                b = s.encode('latin-1')
+                return b
+            except Exception:
+                try:
+                    return s.encode('utf-8')
+                except Exception:
+                    return None
+
+    # unknown type
+    return None
+
+# Simple in-memory TTL cache for customer summaries to reduce repeated load
+_SUMMARY_CACHE = {}
+_SUMMARY_CACHE_LOCK = threading.Lock()
+_SUMMARY_CACHE_TTL = 30.0  # seconds
+# Per-application ornaments summary cache
+_ORNAMENT_SUMMARY_CACHE = {}
+_ORNAMENT_SUMMARY_CACHE_LOCK = threading.Lock()
+_ORNAMENT_SUMMARY_CACHE_TTL = 60.0  # seconds
+
+
+def invalidate_ornament_summary_cache(app_ids):
+    """Invalidate cached ornament summaries for any cache entries that include the given app_ids."""
+    if not app_ids:
+        return
+    try:
+        ids = set(int(x) for x in app_ids)
+    except Exception:
+        ids = set(app_ids)
+    with _ORNAMENT_SUMMARY_CACHE_LOCK:
+        keys_to_delete = [k for k in _ORNAMENT_SUMMARY_CACHE.keys() if ids.intersection(set(k))]
+        for k in keys_to_delete:
+            _ORNAMENT_SUMMARY_CACHE.pop(k, None)
 from models5 import (
     AccountCheckRequest, AccountCheckResponse,
     AccountCreateRequest, AccountCreateResponse,
@@ -216,32 +288,108 @@ def fetch_bank_accounts(cur, account_id: int):
 
 
 def fetch_account_documents(cur, account_id: int):
+    # return only metadata and limit the number of rows to avoid fetching large blobs
     cur.execute(
         """
-        SELECT *
-        FROM gold_schema.account_documents
+        SELECT document_id, document_type, file_name, file_size_mb, uploaded_at
+        FROM gold_schema.account_documents_meta
         WHERE account_id = %s
         ORDER BY uploaded_at DESC
+        LIMIT 50
         """,
         (account_id,)
     )
     return cur.fetchall()
 
 
-def fetch_ornaments_for_applications(cur, application_ids):
+def fetch_ornaments_for_applications(cur, application_ids, limit: int | None = None):
+    """Fetch ornaments for a list of application_ids.
+
+    Optional `limit` caps the total rows returned to avoid heavy scans when used
+    in summary endpoints. Pass a small limit (e.g. 200) from `get_customer_summary`.
+    """
     if not application_ids:
         return []
 
+    # select only required ornament columns to reduce IO and allow index-only scans
+    if limit is not None:
+        cur.execute(
+            """
+            SELECT application_id, item_id, item_name, purity_percentage, approx_weight_gms,
+                   item_photo_url, quantity, created_at
+            FROM gold_schema.ornaments
+            WHERE application_id = ANY(%s)
+            ORDER BY application_id, created_at ASC
+            LIMIT %s
+            """,
+            (application_ids, limit)
+        )
+    else:
+        cur.execute(
+            """
+            SELECT application_id, item_id, item_name, purity_percentage, approx_weight_gms,
+                   item_photo_url, quantity, created_at
+            FROM gold_schema.ornaments
+            WHERE application_id = ANY(%s)
+            ORDER BY application_id, created_at ASC
+            """,
+            (application_ids,)
+        )
+    return cur.fetchall()
+
+
+def fetch_ornament_summaries_for_applications(cur, application_ids):
+    """Return lightweight summaries for ornaments grouped by application.
+
+    Each summary contains application_id, count, total_quantity and total_weight.
+    This is intended for use in customer summaries to avoid scanning many rows.
+    """
+    if not application_ids:
+        return []
+
+    # normalize key (order-independent) and check in-memory TTL cache first
+    try:
+        key = tuple(sorted(int(x) for x in application_ids))
+    except Exception:
+        key = tuple(application_ids)
+
+    now = time.time()
+    with _ORNAMENT_SUMMARY_CACHE_LOCK:
+        cached = _ORNAMENT_SUMMARY_CACHE.get(key)
+        if cached and now - cached[0] < _ORNAMENT_SUMMARY_CACHE_TTL:
+            return cached[1]
+
     cur.execute(
         """
-        SELECT *
+        SELECT application_id,
+               COUNT(*) AS ornament_count,
+               COALESCE(SUM(quantity), 0) AS total_quantity,
+               COALESCE(SUM(approx_weight_gms), 0) AS total_weight_gms
         FROM gold_schema.ornaments
         WHERE application_id = ANY(%s)
-        ORDER BY application_id, created_at ASC
+        GROUP BY application_id
         """,
         (application_ids,)
     )
-    return cur.fetchall()
+    rows = cur.fetchall()
+    # Normalize to list of dicts for easier consumption by callers
+    summaries = []
+    for r in rows:
+        if isinstance(r, dict):
+            summaries.append({
+                "application_id": r.get("application_id"),
+                "count": int(r.get("ornament_count") or 0),
+                "total_quantity": int(r.get("total_quantity") or 0),
+                "total_weight_gms": float(r.get("total_weight_gms") or 0.0)
+            })
+        else:
+            summaries.append({
+                "application_id": r[0],
+                "count": int(r[1] or 0),
+                "total_quantity": int(r[2] or 0),
+                "total_weight_gms": float(r[3] or 0.0)
+            })
+    return summaries
 
 
 def fetch_ornaments_for_application(cur, account_id: int, application_id: int):
@@ -260,7 +408,8 @@ def fetch_ornaments_for_application(cur, account_id: int, application_id: int):
 
     cur.execute(
         """
-        SELECT *
+         SELECT application_id, item_id, item_name, purity_percentage, approx_weight_gms,
+             item_photo_url, quantity, created_at
         FROM gold_schema.ornaments
         WHERE application_id = %s
         ORDER BY created_at ASC, item_id ASC
@@ -268,6 +417,62 @@ def fetch_ornaments_for_application(cur, account_id: int, application_id: int):
         (application_id,)
     )
     ornaments = cur.fetchall()
+
+    # If `item_photo_url` holds a document_id reference, batch-load blobs to avoid per-row queries
+    try:
+        # collect numeric document ids referenced
+        doc_ids = []
+        for o in ornaments:
+            if isinstance(o, dict):
+                photo_ref = o.get('item_photo_url')
+            else:
+                photo_ref = o[5] if len(o) > 5 else None
+            try:
+                did = int(photo_ref)
+            except Exception:
+                did = None
+            if did:
+                doc_ids.append(did)
+
+        if doc_ids:
+            # fetch blobs for all referenced doc ids in one query (owner check)
+            cur.execute(
+                """
+                SELECT document_id, file_path
+                FROM gold_schema.account_documents
+                WHERE document_id = ANY(%s) AND account_id = %s
+                """,
+                (list(set(doc_ids)), account_id)
+            )
+            rows = cur.fetchall()
+            blob_map = {}
+            for r in rows:
+                if isinstance(r, dict):
+                    blob_map[int(r.get('document_id'))] = r.get('file_path')
+                else:
+                    blob_map[int(r[0])] = r[1]
+
+            # replace references with actual blob (base64 or bytes)
+            for i, o in enumerate(ornaments):
+                if isinstance(o, dict):
+                    photo_ref = o.get('item_photo_url')
+                else:
+                    photo_ref = o[5] if len(o) > 5 else None
+                try:
+                    did = int(photo_ref)
+                except Exception:
+                    did = None
+                if did and did in blob_map:
+                    file_path = blob_map[did]
+                    if isinstance(o, dict):
+                        o['item_photo_url'] = file_path
+                    else:
+                        tmp = list(o)
+                        tmp[5] = file_path
+                        ornaments[i] = tuple(tmp)
+    except Exception:
+        # don't fail preview/ornament fetch if blob resolution fails
+        pass
 
     total_quantity = application.get("total_quantity") if isinstance(application, dict) else application[3]
     total_weight_gms = application.get("total_weight_gms") if isinstance(application, dict) else application[4]
@@ -323,10 +528,11 @@ def fetch_estimation_preview_context(cur, account_id: int, application_id: int):
 
     cur.execute(
         """
-        SELECT *
-        FROM gold_schema.account_documents
+        SELECT document_id, document_type, file_name, file_size_mb, uploaded_at
+        FROM gold_schema.account_documents_meta
         WHERE account_id = %s
         ORDER BY uploaded_at DESC
+        LIMIT 20
         """,
         (account_id,)
     )
@@ -344,12 +550,199 @@ def fetch_estimation_preview_context(cur, account_id: int, application_id: int):
     )
     pledge_details = cur.fetchone()
 
+    cur.execute(
+        """
+        SELECT e.*, m.application_id
+        FROM gold_schema.estimation_application_map m
+        JOIN gold_schema.estimations e ON e.estimation_id = m.estimation_id
+        WHERE m.application_id = %s
+        ORDER BY e.estimation_date DESC, e.created_at DESC
+        LIMIT 1
+        """,
+        (application_id,)
+    )
+    estimation = cur.fetchone()
+
+    estimation_items = []
+    if estimation:
+        estimation_id = estimation.get('estimation_id') if isinstance(estimation, dict) else estimation[0]
+        cur.execute(
+            """
+            SELECT *
+            FROM gold_schema.estimation_items
+            WHERE estimation_id = %s
+            ORDER BY created_at ASC
+            """,
+            (estimation_id,)
+        )
+        estimation_items = cur.fetchall()
+
+    # fetch ornaments for this application so estimation preview can show item photos
+    cur.execute(
+        """
+        SELECT application_id, item_id, item_name, purity_percentage, approx_weight_gms,
+               item_photo_url, quantity, created_at
+        FROM gold_schema.ornaments
+        WHERE application_id = %s
+        ORDER BY created_at ASC, item_id ASC
+        """,
+        (application_id,)
+    )
+    ornaments = cur.fetchall()
+
+    # If ornaments reference document ids in `item_photo_url`, batch-resolve blobs
+    try:
+        doc_ids = []
+        for o in ornaments:
+            if isinstance(o, dict):
+                photo_ref = o.get('item_photo_url')
+            else:
+                photo_ref = o[5] if len(o) > 5 else None
+            try:
+                did = int(photo_ref)
+            except Exception:
+                did = None
+            if did:
+                doc_ids.append(did)
+
+        if doc_ids:
+            cur.execute(
+                """
+                SELECT document_id, file_path
+                FROM gold_schema.account_documents
+                WHERE document_id = ANY(%s) AND account_id = %s
+                """,
+                (list(set(doc_ids)), account_id)
+            )
+            rows = cur.fetchall()
+            blob_map = {}
+            for r in rows:
+                if isinstance(r, dict):
+                    blob_map[int(r.get('document_id'))] = r.get('file_path')
+                else:
+                    blob_map[int(r[0])] = r[1]
+
+            for i, o in enumerate(ornaments):
+                if isinstance(o, dict):
+                    photo_ref = o.get('item_photo_url')
+                else:
+                    photo_ref = o[5] if len(o) > 5 else None
+                try:
+                    did = int(photo_ref)
+                except Exception:
+                    did = None
+                if did and did in blob_map:
+                    file_path = blob_map[did]
+                    if isinstance(o, dict):
+                        o['item_photo_url'] = file_path
+                    else:
+                        tmp = list(o)
+                        tmp[5] = file_path
+                        ornaments[i] = tuple(tmp)
+    except Exception:
+        pass
+
     return {
         "customer": customer,
         "application": application,
         "addresses": addresses,
         "documents": documents,
-        "pledge_details": pledge_details
+        "pledge_details": pledge_details,
+        "estimation": estimation,
+        "items": estimation_items,
+        "ornaments": ornaments
+    }
+
+
+def fetch_payment_preview_context(cur, account_id: int, application_id: int):
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.accounts
+        WHERE account_id = %s
+        LIMIT 1
+        """,
+        (account_id,)
+    )
+    customer = cur.fetchone()
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.applications
+        WHERE account_id = %s AND application_id = %s
+        LIMIT 1
+        """,
+        (account_id, application_id)
+    )
+    application = cur.fetchone()
+    if not application:
+        raise HTTPException(404, "Application not found")
+
+    addresses = fetch_account_addresses(cur, account_id)
+    documents = fetch_account_documents(cur, account_id)
+
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.pledge_details
+        WHERE application_id = %s
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (application_id,)
+    )
+    pledge_details = cur.fetchone()
+
+    cur.execute(
+        """
+        SELECT *
+        FROM gold_schema.payment_invoices
+        WHERE account_id = %s AND application_id = %s
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (account_id, application_id)
+    )
+    invoice = cur.fetchone()
+
+    invoice_items = []
+    settlements = []
+    if invoice:
+        payment_invoice_id = invoice.get('payment_invoice_id') if isinstance(invoice, dict) else invoice[0]
+        cur.execute(
+            """
+            SELECT *
+            FROM gold_schema.payment_invoice_items
+            WHERE payment_invoice_id = %s
+            ORDER BY created_at ASC
+            """,
+            (payment_invoice_id,)
+        )
+        invoice_items = cur.fetchall()
+
+        cur.execute(
+            """
+            SELECT *
+            FROM gold_schema.payment_settlements
+            WHERE payment_invoice_id = %s
+            ORDER BY payment_date DESC, created_at DESC
+            """,
+            (payment_invoice_id,)
+        )
+        settlements = cur.fetchall()
+
+    return {
+        "customer": customer,
+        "application": application,
+        "addresses": addresses,
+        "documents": documents,
+        "pledge_details": pledge_details,
+        "invoice": invoice,
+        "invoice_items": invoice_items,
+        "settlements": settlements
     }
 
 
@@ -384,11 +777,12 @@ def fetch_application_preview_context(cur, account_id: int, application_id: int)
 
     cur.execute(
         """
-        SELECT document_type, file_path, uploaded_at
-        FROM gold_schema.account_documents
+                SELECT document_id, document_type, file_name, uploaded_at
+                FROM gold_schema.account_documents_meta
         WHERE account_id = %s
           AND document_type ILIKE '%%photo%%'
         ORDER BY uploaded_at DESC
+        LIMIT 5
         """,
         (account_id,)
     )
@@ -408,7 +802,8 @@ def fetch_application_preview_context(cur, account_id: int, application_id: int)
 
     cur.execute(
         """
-        SELECT *
+        SELECT application_id, item_id, item_name, purity_percentage, approx_weight_gms,
+               item_photo_url, quantity, created_at, updated_at
         FROM gold_schema.ornaments
         WHERE application_id = %s
         ORDER BY created_at ASC, item_id ASC
@@ -439,6 +834,43 @@ def fetch_pledge_details_for_applications(cur, application_ids):
         ORDER BY application_id, created_at DESC
         """,
         (application_ids,)
+    )
+    return cur.fetchall()
+
+
+def fetch_estimation_summaries_for_account(cur, account_id: int, limit: int = 20):
+    """Return lightweight estimation summaries for customer summary endpoint."""
+    cur.execute(
+        """
+        SELECT e.estimation_id,
+               e.estimation_no,
+               e.estimation_date,
+               e.total_net_amount,
+               e.created_at,
+               m.application_id
+        FROM gold_schema.estimations e
+        LEFT JOIN gold_schema.estimation_application_map m
+            ON e.estimation_id = m.estimation_id
+        WHERE e.account_id = %s
+        ORDER BY e.estimation_date DESC, e.created_at DESC
+        LIMIT %s
+        """,
+        (account_id, limit)
+    )
+    return cur.fetchall()
+
+
+def fetch_invoice_summaries_for_account(cur, account_id: int, limit: int = 20):
+    """Return lightweight invoice summaries for customer summary endpoint."""
+    cur.execute(
+        """
+        SELECT payment_invoice_id, invoice_no, invoice_date, total_net_amount, payment_status, application_id, created_at
+        FROM gold_schema.payment_invoices
+        WHERE account_id = %s
+        ORDER BY created_at DESC
+        LIMIT %s
+        """,
+        (account_id, limit)
     )
     return cur.fetchall()
 
@@ -482,6 +914,202 @@ def check_account(payload: AccountCheckRequest):
                 "account_code": row[1]
             }
         return {"exists": False}
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/accounts/documents/{document_id}")
+def get_document(document_id: int, mobile: str = Query(...)):
+    """Return a single document including its `file_path` (blob) for the owner only."""
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        account_id = get_account_id(cur, mobile)
+        cur.execute(
+            """
+            SELECT document_id, document_type, file_path, file_name, file_size_mb, uploaded_at
+            FROM gold_schema.account_documents
+            WHERE document_id = %s AND account_id = %s
+            LIMIT 1
+            """,
+            (document_id, account_id)
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Document not found")
+        return row
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/accounts/documents/{document_id}/preview")
+def preview_document(document_id: int, mobile: str = Query(...)):
+    """Return a small preview-friendly data URL for image documents only.
+
+    This keeps list endpoints lightweight and lets the frontend request previews
+    on demand using the account owner's `mobile` query param.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        account_id = get_account_id(cur, mobile)
+        cur.execute(
+            """
+            SELECT file_path, file_name
+            FROM gold_schema.account_documents
+            WHERE document_id = %s AND account_id = %s
+            LIMIT 1
+            """,
+            (document_id, account_id)
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Document not found")
+
+        # handle RealDictCursor or tuple
+        if isinstance(row, dict):
+            file_path = row.get('file_path')
+            file_name = row.get('file_name')
+        else:
+            file_path = row[0]
+            file_name = row[1]
+
+        if not file_path:
+            raise HTTPException(404, "No file blob available for preview")
+
+        # determine mime type from filename extension
+        mime = 'application/octet-stream'
+        if file_name:
+            lower = file_name.lower()
+            if lower.endswith('.jpg') or lower.endswith('.jpeg'):
+                mime = 'image/jpeg'
+            elif lower.endswith('.png'):
+                mime = 'image/png'
+            elif lower.endswith('.gif'):
+                mime = 'image/gif'
+            elif lower.endswith('.pdf'):
+                mime = 'application/pdf'
+
+        content = _normalize_blob(file_path)
+        if content is None:
+            raise HTTPException(500, "Failed to prepare preview data")
+
+        b64 = base64.b64encode(content).decode('ascii')
+        data_url = f"data:{mime};base64,{b64}"
+
+        return {
+            "document_id": document_id,
+            "file_name": file_name,
+            "mime_type": mime,
+            "preview_data": data_url
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/accounts/documents/{document_id}/download")
+def download_document(document_id: int, mobile: str = Query(...)):
+    """Stream the raw document bytes with appropriate headers for download."""
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        account_id = get_account_id(cur, mobile)
+        cur.execute(
+            """
+            SELECT file_path, file_name
+            FROM gold_schema.account_documents
+            WHERE document_id = %s AND account_id = %s
+            LIMIT 1
+            """,
+            (document_id, account_id)
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Document not found")
+
+        if isinstance(row, dict):
+            file_path = row.get('file_path')
+            file_name = row.get('file_name')
+        else:
+            file_path = row[0]
+            file_name = row[1]
+
+        if not file_path:
+            raise HTTPException(404, "No file blob available")
+
+        content = _normalize_blob(file_path)
+        if content is None:
+            raise HTTPException(500, "Failed to read file blob")
+
+        # determine mime
+        mime = 'application/octet-stream'
+        if file_name:
+            ln = file_name.lower()
+            if ln.endswith('.jpg') or ln.endswith('.jpeg'):
+                mime = 'image/jpeg'
+            elif ln.endswith('.png'):
+                mime = 'image/png'
+            elif ln.endswith('.gif'):
+                mime = 'image/gif'
+            elif ln.endswith('.pdf'):
+                mime = 'application/pdf'
+
+        headers = {
+            'Content-Disposition': f'attachment; filename="{file_name or document_id}"'
+        }
+
+        return StreamingResponse(io.BytesIO(content), media_type=mime, headers=headers)
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/accounts/documents/{document_id}/inspect")
+def inspect_document(document_id: int, mobile: str = Query(...)):
+    """Return diagnostic info about how the file is stored to help debugging.
+
+    Returns pg_typeof(file_path), octet_length (if applicable), and a short hex/base64 sample.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        account_id = get_account_id(cur, mobile)
+        cur.execute(
+            """
+            SELECT pg_typeof(file_path) AS fld_type, file_name, file_path
+            FROM gold_schema.account_documents
+            WHERE document_id = %s AND account_id = %s
+            LIMIT 1
+            """,
+            (document_id, account_id)
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Document not found")
+
+        # normalize row
+        if isinstance(row, dict):
+            fld_type = row.get('fld_type')
+            file_name = row.get('file_name')
+            raw = row.get('file_path')
+        else:
+            fld_type, file_name, raw = row
+
+        # normalize blob in python for accurate length and hex sample
+        content = _normalize_blob(raw)
+        bytes_len = len(content) if content is not None else None
+        hex_sample = content[:200].hex() if content is not None else None
+
+        return {
+            'document_id': document_id,
+            'file_name': file_name,
+            'pg_type': str(fld_type),
+            'bytes': bytes_len,
+            'hex_sample': hex_sample
+        }
     finally:
         cur.close()
         conn.close()
@@ -1220,6 +1848,7 @@ def add_document(mobile: str, payload: AccountDocumentCreateRequest):
                     existing[0]
                 )
             )
+            document_id = existing[0]
         else:
             # Insert new document
             cur.execute(
@@ -1230,6 +1859,7 @@ def add_document(mobile: str, payload: AccountDocumentCreateRequest):
                     file_name, file_size_mb
                 )
                 VALUES (%s,%s,%s,%s,%s,%s)
+                RETURNING document_id
                 """,
                 (
                     account_id,
@@ -1240,6 +1870,31 @@ def add_document(mobile: str, payload: AccountDocumentCreateRequest):
                     payload.file_size_mb
                 )
             )
+            document_id = cur.fetchone()[0]
+        # Upsert metadata into account_documents_meta so list endpoints remain populated
+        try:
+            cur.execute(
+                """
+                INSERT INTO gold_schema.account_documents_meta (
+                    document_id, account_id, document_type, file_name, file_size_mb, uploaded_at
+                ) VALUES (%s,%s,%s,%s,%s,CURRENT_TIMESTAMP)
+                ON CONFLICT (document_id) DO UPDATE
+                SET document_type = EXCLUDED.document_type,
+                    file_name = EXCLUDED.file_name,
+                    file_size_mb = EXCLUDED.file_size_mb,
+                    uploaded_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    document_id,
+                    account_id,
+                    payload.document_type,
+                    payload.file_name,
+                    payload.file_size_mb
+                )
+            )
+        except Exception:
+            # don't fail the whole request if meta upsert fails
+            pass
 
         conn.commit()
         return {"status": "DOCUMENT_SAVED"}
@@ -1270,6 +1925,18 @@ def delete_document(mobile: str, document_id: int):
         deleted = cur.fetchone()
         if not deleted:
             raise HTTPException(404, "Document not found")
+        # Also remove metadata entry if present
+        try:
+            cur.execute(
+                """
+                DELETE FROM gold_schema.account_documents_meta
+                WHERE document_id = %s
+                """,
+                (document_id,)
+            )
+        except Exception:
+            pass
+
         conn.commit()
         return {"status": "DOCUMENT_DELETED"}
     finally:
@@ -1985,6 +2652,11 @@ def create_ornaments(payload: OrnamentCreateRequest):
             (total_qty, round(total_wt, 3), application_id)
         )
         conn.commit()
+        # Invalidate ornament summary cache for this application
+        try:
+            invalidate_ornament_summary_cache([application_id])
+        except Exception:
+            pass
         return {
             "application_id": application_id,
             "application_no": application_no,
@@ -2022,6 +2694,21 @@ def get_estimation_preview(
     try:
         account_id = get_account_id(cur, mobile)
         return fetch_estimation_preview_context(cur, account_id, application_id)
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/applications/payment-preview")
+def get_payment_preview(
+    mobile: str = Query(...),
+    application_id: int = Query(...)
+):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        account_id = get_account_id(cur, mobile)
+        return fetch_payment_preview_context(cur, account_id, application_id)
     finally:
         cur.close()
         conn.close()
@@ -2095,6 +2782,11 @@ def delete_ornament(item_id: int, mobile: str = Query(...)):
         )
 
         conn.commit()
+        # Invalidate ornament summary cache for this application
+        try:
+            invalidate_ornament_summary_cache([application_id])
+        except Exception:
+            pass
         return {"status": "deleted", "item_id": item_id}
     finally:
         cur.close()
@@ -3299,9 +3991,18 @@ def get_customer_summary(
     mobile: str = Query(...),
     include: str = Query("customer", description="Comma-separated list of data to include: customer,applications,estimations,invoices,addresses,bank_accounts,documents,ornaments,pledge_details")
 ):
+    # Use a short-lived in-memory cache to avoid repeated expensive fetches
+    cache_key = f"{mobile}|{include}"
+    now = time.time()
+    with _SUMMARY_CACHE_LOCK:
+        cached = _SUMMARY_CACHE.get(cache_key)
+        if cached and now - cached[0] < _SUMMARY_CACHE_TTL:
+            return cached[1]
+
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     try:
+        start_all = time.time()
         customer = fetch_customer_by_mobile(cur, mobile)
         account_id = customer["account_id"]
         result = {"customer": customer}
@@ -3310,35 +4011,56 @@ def get_customer_summary(
         include_set = set(include_list)
         application_ids = None
 
+        # Helper to time each fetch and print slow operations
+        def timed_fetch(name, fn, *args, **kwargs):
+            t0 = time.time()
+            res = fn(*args, **kwargs)
+            t1 = time.time()
+            duration = (t1 - t0) * 1000.0
+            if duration > 200:
+                print(f"[SLOW QUERY] {name} took {duration:.1f} ms")
+            return res
+
         if "applications" in include_set:
-            applications = fetch_applications_for_account(cur, account_id)
+            applications = timed_fetch('fetch_applications_for_account', fetch_applications_for_account, cur, account_id)
             result["applications"] = applications
             application_ids = [app["application_id"] for app in applications]
 
         if "estimations" in include_set:
-            result["estimations"] = fetch_estimations_for_account(cur, account_id)
+            # use lightweight summaries for estimations to avoid fetching all items in summary
+            result["estimations"] = timed_fetch('fetch_estimation_summaries_for_account', fetch_estimation_summaries_for_account, cur, account_id)
 
         if "invoices" in include_set:
-            result["invoices"] = fetch_invoices_for_account(cur, account_id)
+            # use lightweight summaries for invoices to avoid fetching items/settlements in summary
+            result["invoices"] = timed_fetch('fetch_invoice_summaries_for_account', fetch_invoice_summaries_for_account, cur, account_id)
 
         if "addresses" in include_set:
-            result["addresses"] = fetch_account_addresses(cur, account_id)
+            result["addresses"] = timed_fetch('fetch_account_addresses', fetch_account_addresses, cur, account_id)
 
         if "bank_accounts" in include_set:
-            result["bank_accounts"] = fetch_bank_accounts(cur, account_id)
+            result["bank_accounts"] = timed_fetch('fetch_bank_accounts', fetch_bank_accounts, cur, account_id)
 
         if "documents" in include_set:
-            result["documents"] = fetch_account_documents(cur, account_id)
+            result["documents"] = timed_fetch('fetch_account_documents', fetch_account_documents, cur, account_id)
 
         if "ornaments" in include_set or "pledge_details" in include_set:
             if application_ids is None:
-                application_ids = fetch_application_ids(cur, account_id)
+                application_ids = timed_fetch('fetch_application_ids', fetch_application_ids, cur, account_id)
 
             if "ornaments" in include_set:
-                result["ornaments"] = fetch_ornaments_for_applications(cur, application_ids)
+                # return a lightweight ornaments summary (counts/totals) instead of full rows
+                result["ornaments"] = timed_fetch('fetch_ornament_summaries_for_applications', fetch_ornament_summaries_for_applications, cur, application_ids)
 
             if "pledge_details" in include_set:
-                result["pledge_details"] = fetch_pledge_details_for_applications(cur, application_ids)
+                result["pledge_details"] = timed_fetch('fetch_pledge_details_for_applications', fetch_pledge_details_for_applications, cur, application_ids)
+
+        total_ms = (time.time() - start_all) * 1000.0
+        if total_ms > 300:
+            print(f"[SLOW SUMMARY] total customer summary for {mobile} took {total_ms:.1f} ms (include={include})")
+
+        # Cache the result briefly
+        with _SUMMARY_CACHE_LOCK:
+            _SUMMARY_CACHE[cache_key] = (time.time(), result)
 
         return result
     finally:
